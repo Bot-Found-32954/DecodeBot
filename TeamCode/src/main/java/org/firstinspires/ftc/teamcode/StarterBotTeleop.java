@@ -192,8 +192,8 @@ public class StarterBotTeleop extends OpMode {
     public void stop() { }
 
     void arcadeDrive(double forward, double rotate) {
-        leftPower = forward + rotate;
-        rightPower = forward - rotate;
+        leftPower = forward - rotate;
+        rightPower = forward + rotate;
 
         /*
          * Send calculated power to wheels

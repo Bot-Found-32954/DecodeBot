@@ -159,7 +159,7 @@ public class StarterBotTeleop extends OpMode {
     public void loop() {
         // Drive control
         arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
-    
+
         // Hold right bumper to run both launcher + feeders
         if (gamepad1.right_bumper) {
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
@@ -170,7 +170,7 @@ public class StarterBotTeleop extends OpMode {
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
         }
-    
+
         // Telemetry for debugging
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
         telemetry.addData("Feeder Power", "L: %.1f  R: %.1f", FULL_SPEED, FULL_SPEED);

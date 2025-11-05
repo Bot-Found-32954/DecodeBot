@@ -227,10 +227,11 @@ public class StarterBotTeleop extends OpMode {
                 break;
             case SPIN_UP:
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-                if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY) {
+                if (Math.abs(launcher.getVelocity()) >= Math.abs(LAUNCHER_MIN_VELOCITY)) {
                     launchState = LaunchState.LAUNCH;
                 }
                 break;
+
             case LAUNCH:
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);

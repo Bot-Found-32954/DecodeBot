@@ -68,7 +68,6 @@ public class StarterBotTeleop extends OpMode {
      * functions and autonomous routines in a way that avoids loops within loops, and "waits".
      */
 
-
     // Setup a variable for each drive wheel to save power level for telemetry
     double leftPower;
     double rightPower;
@@ -142,15 +141,13 @@ public class StarterBotTeleop extends OpMode {
      * Code to run REPEATEDLY after the driver hits INIT, but before they hit START
      */
     @Override
-    public void init_loop() {
-    }
+    public void init_loop() { }
 
     /*
      * Code to run ONCE when the driver hits START
      */
     @Override
-    public void start() {
-    }
+    public void start() { }
 
     /*
      * Code to run REPEATEDLY after the driver hits START but before they hit STOP
@@ -160,15 +157,22 @@ public class StarterBotTeleop extends OpMode {
         // Drive control
         arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
 
-        // Hold right bumper to run both launcher + feeders
+        /*
+         * Hold right bumper to run both launcher + feeders continuously.
+         * Release to stop them.
+         */
         if (gamepad1.right_bumper) {
+            // Spin up the launcher to the target velocity
+            launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+            // Run both feeder servos at full speed while held
             leftFeeder.setPower(FULL_SPEED);
             rightFeeder.setPower(FULL_SPEED);
         } else {
-            // FIXED: Use setPower(0) to actually stop the launcher motor
-            // setVelocity(0) keeps the motor in velocity control mode, which doesn't stop it
+            // Stop launcher and feeders completely when released
             launcher.setPower(0);
+            launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER); // disables PID velocity hold
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
         }
@@ -176,18 +180,16 @@ public class StarterBotTeleop extends OpMode {
         // Telemetry for debugging
         telemetry.addData("RB Pressed", gamepad1.right_bumper);
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
-        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f", 
-            leftFeeder.getPower(), rightFeeder.getPower());
+        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f",
+                leftFeeder.getPower(), rightFeeder.getPower());
         telemetry.update();
     }
-
 
     /*
      * Code to run ONCE after the driver hits STOP
      */
     @Override
-    public void stop() {
-    }
+    public void stop() { }
 
     void arcadeDrive(double forward, double rotate) {
         leftPower = forward + rotate;
@@ -199,6 +201,4 @@ public class StarterBotTeleop extends OpMode {
         leftDrive.setPower(leftPower);
         rightDrive.setPower(rightPower);
     }
-
-
 }

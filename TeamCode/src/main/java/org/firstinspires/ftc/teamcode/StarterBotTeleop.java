@@ -166,14 +166,18 @@ public class StarterBotTeleop extends OpMode {
             leftFeeder.setPower(FULL_SPEED);
             rightFeeder.setPower(FULL_SPEED);
         } else {
-            launcher.setVelocity(STOP_SPEED);
+            // FIXED: Use setPower(0) to actually stop the launcher motor
+            // setVelocity(0) keeps the motor in velocity control mode, which doesn't stop it
+            launcher.setPower(0);
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
         }
     
         // Telemetry for debugging
+        telemetry.addData("RB Pressed", gamepad1.right_bumper);
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
-        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f", FULL_SPEED, FULL_SPEED);
+        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f", 
+            leftFeeder.getPower(), rightFeeder.getPower());
         telemetry.update();
     }
 

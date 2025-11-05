@@ -67,14 +67,7 @@ public class StarterBotTeleop extends OpMode {
      * We can use higher level code to cycle through these states. But this allows us to write
      * functions and autonomous routines in a way that avoids loops within loops, and "waits".
      */
-    private enum LaunchState {
-        IDLE,
-        SPIN_UP,
-        LAUNCH,
-        LAUNCHING,
-    }
 
-    private LaunchState launchState;
 
     // Setup a variable for each drive wheel to save power level for telemetry
     double leftPower;
@@ -85,7 +78,6 @@ public class StarterBotTeleop extends OpMode {
      */
     @Override
     public void init() {
-        launchState = LaunchState.IDLE;
 
         /*
          * Initialize the hardware variables. Note that the strings used here as parameters
@@ -165,40 +157,26 @@ public class StarterBotTeleop extends OpMode {
      */
     @Override
     public void loop() {
-        /*
-         * Here we call a function called arcadeDrive. The arcadeDrive function takes the input from
-         * the joysticks, and applies power to the left and right drive motor to move the robot
-         * as requested by the driver. "arcade" refers to the control style we're using here.
-         * Much like a classic arcade game, when you move the left joystick forward both motors
-         * work to drive the robot forward, and when you move the right joystick left and right
-         * both motors work to rotate the robot. Combinations of these inputs can be used to create
-         * more complex maneuvers.
-         */
+        // Drive control
         arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
-
-        /*
-         * Here we give the user control of the speed of the launcher motor without automatically
-         * queuing a shot.
-         */
-        if (gamepad1.y) {
+    
+        // Hold right bumper to run both launcher + feeders
+        if (gamepad1.right_bumper) {
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-        } else if (gamepad1.b) { // stop flywheel
+            leftFeeder.setPower(FULL_SPEED);
+            rightFeeder.setPower(FULL_SPEED);
+        } else {
             launcher.setVelocity(STOP_SPEED);
+            leftFeeder.setPower(STOP_SPEED);
+            rightFeeder.setPower(STOP_SPEED);
         }
-
-        /*
-         * Now we call our "Launch" function.
-         */
-        launch(gamepad1.rightBumperWasPressed());
-
-        /*
-         * Show the state and motor powers
-         */
-        telemetry.addData("State", launchState);
-        telemetry.addData("Motors", "left (%.2f), right (%.2f)", leftPower, rightPower);
-        telemetry.addData("motorSpeed", launcher.getVelocity());
-
+    
+        // Telemetry for debugging
+        telemetry.addData("Launcher Velocity", launcher.getVelocity());
+        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f", FULL_SPEED, FULL_SPEED);
+        telemetry.update();
     }
+
 
     /*
      * Code to run ONCE after the driver hits STOP
@@ -218,33 +196,5 @@ public class StarterBotTeleop extends OpMode {
         rightDrive.setPower(rightPower);
     }
 
-    void launch(boolean shotRequested) {
-        switch (launchState) {
-            case IDLE:
-                if (shotRequested) {
-                    launchState = LaunchState.SPIN_UP;
-                }
-                break;
-            case SPIN_UP:
-                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-                if (Math.abs(launcher.getVelocity()) >= Math.abs(LAUNCHER_MIN_VELOCITY)) {
-                    launchState = LaunchState.LAUNCH;
-                }
-                break;
 
-            case LAUNCH:
-                leftFeeder.setPower(FULL_SPEED);
-                rightFeeder.setPower(FULL_SPEED);
-                feederTimer.reset();
-                launchState = LaunchState.LAUNCHING;
-                break;
-            case LAUNCHING:
-                if (feederTimer.seconds() > FEED_TIME_SECONDS) {
-                    launchState = LaunchState.IDLE;
-                    leftFeeder.setPower(STOP_SPEED);
-                    rightFeeder.setPower(STOP_SPEED);
-                }
-                break;
-        }
-    }
 }

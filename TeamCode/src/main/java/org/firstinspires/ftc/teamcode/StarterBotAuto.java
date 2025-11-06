@@ -15,11 +15,13 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
 @Autonomous(name="StarterBotAuto", group="StarterBot")
+//@Disabled
 public class StarterBotAuto extends OpMode
 {
-    final double FEED_TIME = 0.20; //The feeder servos run this long when a shot is requested.
-    final double LAUNCHER_TARGET_VELOCITY = -1200;
-    final double LAUNCHER_MIN_VELOCITY = -1100;
+
+    final double FEED_TIME = 0.40; //The feeder servos run this long when a shot is requested.
+    final double LAUNCHER_TARGET_VELOCITY = 1225;
+    final double LAUNCHER_MIN_VELOCITY = 1175;
     final double TIME_BETWEEN_SHOTS = 2;
     final double DRIVE_SPEED = 0.5;
     final double ROTATE_SPEED = 0.2;
@@ -57,7 +59,7 @@ public class StarterBotAuto extends OpMode
         DRIVING_AWAY_FROM_GOAL,
         ROTATING,
         DRIVING_OFF_LINE,
-        COMPLETE
+        COMPLETE;
     }
 
     private AutonomousState autonomousState;
@@ -67,7 +69,7 @@ public class StarterBotAuto extends OpMode
      */
     private enum Alliance {
         RED,
-        BLUE
+        BLUE;
     }
 
     /*
@@ -127,7 +129,7 @@ public class StarterBotAuto extends OpMode
         launcher.setZeroPowerBehavior(BRAKE);
 
         /*
-         * Here we set our launcher to the RUN_USING_ENCODER run-mode.
+         * Here we set our launcher to the RUN_USING_ENCODER runmode.
          * If you notice that you have no control over the velocity of the motor, and it just jumps
          * right to a number much higher than your set point, make sure that your encoders are plugged
          * into the port right beside the motor itself.
@@ -146,6 +148,8 @@ public class StarterBotAuto extends OpMode
          */
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
+        // set launcher to spin the right way
+        launcher.setDirection(DcMotorSimple.Direction.REVERSE);
 
         // Tell the driver that initialization is complete.
         telemetry.addData("Status", "Initialized");

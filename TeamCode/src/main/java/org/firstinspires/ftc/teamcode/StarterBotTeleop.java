@@ -17,30 +17,26 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  * system for robot mobility, one high-speed motor driving two "launcher wheels", and two servos
  * which feed that launcher.
  *
- * Likely the most niche concept we'll use in this example is closed-loop motor velocity control.
- * This control method reads the current speed as reported by the motor's encoder and applies a varying
- * amount of power to reach, and then hold a target velocity. The FTC SDK calls this control method
- * "RUN_USING_ENCODER". This contrasts to the default "RUN_WITHOUT_ENCODER" where you control the power
- * applied to the motor directly.
- * Since the dynamics of a launcher wheel system varies greatly from those of most other FTC mechanisms,
- * we will also need to adjust the "PIDF" coefficients with some that are a better fit for our application.
+ * Modified controls:
+ * - Y button: Start launcher motor continuously
+ * - B button: Stop launcher motor
+ * - X button: Run feeders (only works if launcher is running)
  */
 
 @TeleOp(name = "StarterBotTeleop", group = "StarterBot")
 //@Disabled
 public class StarterBotTeleop extends OpMode {
-    final double FEED_TIME_SECONDS = 0.20; //The feeder servos run this long when a shot is requested.
+    final double FEED_TIME_SECONDS = 0.40; // Time feeders run to launch one artifact
+    final double COOLDOWN_TIME_SECONDS = 0.67; // Cooldown time between launches
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
 
     /*
      * When we control our launcher motor, we are using encoders. These allow the control system
      * to read the current speed of the motor and apply more or less power to keep it at a constant
-     * velocity. Here we are setting the target, and minimum velocity that the launcher should run
-     * at. The minimum velocity is a threshold for determining when to fire.
+     * velocity. Here we are setting the target velocity that the launcher should run at.
      */
-    final double LAUNCHER_TARGET_VELOCITY = -1125;
-    final double LAUNCHER_MIN_VELOCITY = -1075;
+    final double LAUNCHER_TARGET_VELOCITY = -1200;
 
     // Declare OpMode members.
     private DcMotor leftDrive = null;
@@ -49,24 +45,14 @@ public class StarterBotTeleop extends OpMode {
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
 
-    ElapsedTime feederTimer = new ElapsedTime();
+    // Track whether launcher is running
+    private boolean launcherRunning = false;
 
-    /*
-     * TECH TIP: State Machines
-     * We use a "state machine" to control our launcher motor and feeder servos in this program.
-     * The first step of a state machine is creating an enum that captures the different "states"
-     * that our code can be in.
-     * The core advantage of a state machine is that it allows us to continue to loop through all
-     * of our code while only running specific code when it's necessary. We can continuously check
-     * what "State" our machine is in, run the associated code, and when we are done with that step
-     * move on to the next state.
-     * This enum is called the "LaunchState". It reflects the current condition of the shooter
-     * motor and we move through the enum when the user asks our code to fire a shot.
-     * It starts at idle, when the user requests a launch, we enter SPIN_UP where we get the
-     * motor up to speed, once it meets a minimum speed then it starts and then ends the launch process.
-     * We can use higher level code to cycle through these states. But this allows us to write
-     * functions and autonomous routines in a way that avoids loops within loops, and "waits".
-     */
+    // Track feeder state
+    private boolean feedersRunning = false;
+    private boolean inCooldown = false;
+    private ElapsedTime feederTimer = new ElapsedTime();
+    private boolean xButtonPreviouslyPressed = false;
 
     // Setup a variable for each drive wheel to save power level for telemetry
     double leftPower;
@@ -158,28 +144,86 @@ public class StarterBotTeleop extends OpMode {
         arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
 
         /*
-         * Hold right bumper to run both launcher + feeders continuously.
-         * Release to stop them.
+         * Y button: Start launcher motor continuously
          */
-        if (gamepad1.right_bumper) {
-            // Spin up the launcher to the target velocity
+        if (gamepad1.y) {
+            launcherRunning = true;
             launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+        }
 
-            // Run both feeder servos at full speed while held
-            leftFeeder.setPower(FULL_SPEED);
-            rightFeeder.setPower(FULL_SPEED);
-        } else {
-            // Stop launcher and feeders completely when released
+        /*
+         * B button: Stop launcher motor
+         */
+        if (gamepad1.b) {
+            launcherRunning = false;
             launcher.setPower(0);
-            launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER); // disables PID velocity hold
+            launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        }
+
+        /*
+         * X button: Run feeders for a timed duration (only if launcher is running)
+         * Detects button press (not hold) to start feeding cycle
+         * Includes 1-second cooldown between launches
+         */
+        boolean xButtonCurrentlyPressed = gamepad1.x;
+
+        // Detect X button press (transition from not pressed to pressed)
+        if (xButtonCurrentlyPressed && !xButtonPreviouslyPressed && launcherRunning && !feedersRunning && !inCooldown) {
+            // Start feeding cycle
+            feedersRunning = true;
+            feederTimer.reset();
+        }
+
+        xButtonPreviouslyPressed = xButtonCurrentlyPressed;
+
+        // Control feeders based on timer
+        if (feedersRunning) {
+            if (feederTimer.seconds() < FEED_TIME_SECONDS) {
+                // Still feeding
+                leftFeeder.setPower(FULL_SPEED);
+                rightFeeder.setPower(FULL_SPEED);
+            } else {
+                // Feeding time complete, stop feeders and start cooldown
+                feedersRunning = false;
+                inCooldown = true;
+                feederTimer.reset();
+                leftFeeder.setPower(STOP_SPEED);
+                rightFeeder.setPower(STOP_SPEED);
+            }
+        } else if (inCooldown) {
+            // In cooldown period
+            leftFeeder.setPower(STOP_SPEED);
+            rightFeeder.setPower(STOP_SPEED);
+
+            if (feederTimer.seconds() >= COOLDOWN_TIME_SECONDS) {
+                // Cooldown complete
+                inCooldown = false;
+            }
+        } else {
+            // Not in feeding cycle or cooldown
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
         }
 
         // Telemetry for debugging
-        telemetry.addData("RB Pressed", gamepad1.right_bumper);
+        telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
+
+        String feederStatus;
+        if (feedersRunning) {
+            feederStatus = "FEEDING";
+        } else if (inCooldown) {
+            feederStatus = "COOLDOWN";
+        } else {
+            feederStatus = "READY";
+        }
+        telemetry.addData("Feeders Status", feederStatus);
+
+        if (feedersRunning || inCooldown) {
+            telemetry.addData("Timer", "%.2f sec", feederTimer.seconds());
+        }
+
         telemetry.addData("Feeder Power", "L: %.1f  R: %.1f",
                 leftFeeder.getPower(), rightFeeder.getPower());
         telemetry.update();

@@ -32,10 +32,12 @@ public class StarterBotAuto extends OpMode
 
     int shotsToFire = 3; //The number of shots to fire in this auto.
 
-    double robotRotationAngle = 45;
+    double robotRotationAngle = 60;
     private final ElapsedTime shotTimer = new ElapsedTime();
     private final ElapsedTime feederTimer = new ElapsedTime();
     private final ElapsedTime driveTimer = new ElapsedTime();
+    private final ElapsedTime straightTimer = new ElapsedTime();
+    private final ElapsedTime turnTimer = new ElapsedTime();
 
     // Declare OpMode members.
     private DcMotor leftDrive = null;
@@ -59,6 +61,9 @@ public class StarterBotAuto extends OpMode
         DRIVING_AWAY_FROM_GOAL,
         ROTATING,
         DRIVING_OFF_LINE,
+        NO_LAUNCH_STRAIGHT,
+        NO_LAUNCH_TURN,
+        NO_LAUNCH_FINAL,
         COMPLETE;
     }
 
@@ -73,9 +78,20 @@ public class StarterBotAuto extends OpMode
     }
 
     /*
+     * Enum to select autonomous mode
+     */
+    private enum AutoMode {
+        LAUNCH_RED,
+        LAUNCH_BLUE,
+        NO_LAUNCH_RED,
+        NO_LAUNCH_BLUE;
+    }
+
+    /*
      * When we create the instance of our enum we can also assign a default state.
      */
     private Alliance alliance = Alliance.RED;
+    private AutoMode autoMode = AutoMode.LAUNCH_RED;
 
     /*
      * This code runs ONCE when the driver hits INIT.
@@ -169,17 +185,27 @@ public class StarterBotAuto extends OpMode
 
 
         /*
-         * Here we allow the driver to select which alliance we are on using the gamepad.
+         * Here we allow the driver to select which mode using the gamepad.
          */
         if (gamepad1.b) {
+            autoMode = AutoMode.LAUNCH_RED;
             alliance = Alliance.RED;
         } else if (gamepad1.x) {
+            autoMode = AutoMode.LAUNCH_BLUE;
+            alliance = Alliance.BLUE;
+        } else if (gamepad1.y) {
+            autoMode = AutoMode.NO_LAUNCH_RED;
+            alliance = Alliance.RED;
+        } else if (gamepad1.a) {
+            autoMode = AutoMode.NO_LAUNCH_BLUE;
             alliance = Alliance.BLUE;
         }
 
-        telemetry.addData("Press X", "for BLUE");
-        telemetry.addData("Press B", "for RED");
-        telemetry.addData("Selected Alliance", alliance);
+        telemetry.addData("Press B", "for LAUNCH RED");
+        telemetry.addData("Press X", "for LAUNCH BLUE");
+        telemetry.addData("Press Y", "for NO LAUNCH RED");
+        telemetry.addData("Press A", "for NO LAUNCH BLUE");
+        telemetry.addData("Selected Mode", autoMode);
     }
 
     /*
@@ -187,6 +213,13 @@ public class StarterBotAuto extends OpMode
      */
     @Override
     public void start() {
+        // Set initial state based on selected mode
+        if (autoMode == AutoMode.NO_LAUNCH_RED || autoMode == AutoMode.NO_LAUNCH_BLUE) {
+            autonomousState = AutonomousState.NO_LAUNCH_STRAIGHT;
+            straightTimer.reset();
+        } else {
+            autonomousState = AutonomousState.LAUNCH;
+        }
     }
 
     /*
@@ -248,7 +281,7 @@ public class StarterBotAuto extends OpMode
                  * the robot has been within a tolerance of the target position for "holdSeconds."
                  * Once the function returns "true" we reset the encoders again and move on.
                  */
-                if(drive(DRIVE_SPEED, -4, DistanceUnit.INCH, 1)){
+                if(drive(DRIVE_SPEED, -20, DistanceUnit.INCH, 1)){
                     leftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
                     rightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
                     autonomousState = AutonomousState.ROTATING;
@@ -256,10 +289,11 @@ public class StarterBotAuto extends OpMode
                 break;
 
             case ROTATING:
+                //RED now rotates -45 degrees, BLUE now rotates 45 degrees
                 if(alliance == Alliance.RED){
-                    robotRotationAngle = 45;
+                    robotRotationAngle = -95;
                 } else if (alliance == Alliance.BLUE){
-                    robotRotationAngle = -45;
+                    robotRotationAngle = 95;
                 }
 
                 if(rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES,1)){
@@ -270,7 +304,64 @@ public class StarterBotAuto extends OpMode
                 break;
 
             case DRIVING_OFF_LINE:
-                if(drive(DRIVE_SPEED, -26, DistanceUnit.INCH, 1)){
+                if(drive(DRIVE_SPEED, -59, DistanceUnit.INCH, 1)){
+                    autonomousState = AutonomousState.COMPLETE;
+                }
+                break;
+
+            /*
+             * NO LAUNCH mode states - drives straight for 4 seconds, then turns and drives for 6 seconds
+             */
+            case NO_LAUNCH_STRAIGHT:
+                // Drive straight for 4 seconds
+                leftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                rightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+                leftDrive.setPower(DRIVE_SPEED);
+                rightDrive.setPower(DRIVE_SPEED);
+
+                if (straightTimer.seconds() > 4.0) {
+                    leftDrive.setPower(0);
+                    rightDrive.setPower(0);
+                    turnTimer.reset();
+                    autonomousState = AutonomousState.NO_LAUNCH_TURN;
+                }
+                break;
+
+            case NO_LAUNCH_TURN:
+                // Turn right for RED, turn left for BLUE, then move to final drive
+                leftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                rightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+                if (alliance == Alliance.RED) {
+                    // Turn right
+                    leftDrive.setPower(ROTATE_SPEED);
+                    rightDrive.setPower(-ROTATE_SPEED);
+                } else {
+                    // Turn left
+                    leftDrive.setPower(-ROTATE_SPEED);
+                    rightDrive.setPower(ROTATE_SPEED);
+                }
+
+                if (turnTimer.seconds() > 1.0) {
+                    leftDrive.setPower(0);
+                    rightDrive.setPower(0);
+                    driveTimer.reset();
+                    autonomousState = AutonomousState.NO_LAUNCH_FINAL;
+                }
+                break;
+
+            case NO_LAUNCH_FINAL:
+                // Drive forward for 6 seconds
+                leftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                rightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+                leftDrive.setPower(DRIVE_SPEED);
+                rightDrive.setPower(DRIVE_SPEED);
+
+                if (driveTimer.seconds() > 6.0) {
+                    leftDrive.setPower(0);
+                    rightDrive.setPower(0);
                     autonomousState = AutonomousState.COMPLETE;
                 }
                 break;
@@ -284,6 +375,7 @@ public class StarterBotAuto extends OpMode
          * after the last "case" that runs every loop. This means we can avoid a lot of
          * "copy-and-paste" that non-state machine autonomous routines fall into.
          */
+        telemetry.addData("AutoMode", autoMode);
         telemetry.addData("AutoState", autonomousState);
         telemetry.addData("LauncherState", launchState);
         telemetry.addData("Motor Current Positions", "left (%d), right (%d)",
@@ -428,6 +520,3 @@ public class StarterBotAuto extends OpMode
         return (driveTimer.seconds() > holdSeconds);
     }
 }
-
-
-

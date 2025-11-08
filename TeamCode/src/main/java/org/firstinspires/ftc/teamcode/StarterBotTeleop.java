@@ -18,6 +18,11 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  * which feed that launcher.
  *
  * Modified controls:
+ * GAMEPAD 1 (Driver):
+ * - Left stick Y: Forward/backward
+ * - Right stick X: Turn left/right
+ *
+ * GAMEPAD 2 (Operator):
  * - Y button: Start launcher motor continuously
  * - B button: Stop launcher motor
  * - X button: Run feeders (only works if launcher is running)
@@ -140,33 +145,33 @@ public class StarterBotTeleop extends OpMode {
      */
     @Override
     public void loop() {
-        // Drive control
+        // GAMEPAD 1: Drive control
         arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
 
         /*
-         * Y button: Start launcher motor continuously
+         * GAMEPAD 2: Y button - Start launcher motor continuously
          */
-        if (gamepad1.y) {
+        if (gamepad2.y) {
             launcherRunning = true;
             launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
         }
 
         /*
-         * B button: Stop launcher motor
+         * GAMEPAD 2: B button - Stop launcher motor
          */
-        if (gamepad1.b) {
+        if (gamepad2.b) {
             launcherRunning = false;
             launcher.setPower(0);
             launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         }
 
         /*
-         * X button: Run feeders for a timed duration (only if launcher is running)
+         * GAMEPAD 2: X button - Run feeders for a timed duration (only if launcher is running)
          * Detects button press (not hold) to start feeding cycle
-         * Includes 1-second cooldown between launches
+         * Includes cooldown between launches
          */
-        boolean xButtonCurrentlyPressed = gamepad1.x;
+        boolean xButtonCurrentlyPressed = gamepad2.x;
 
         // Detect X button press (transition from not pressed to pressed)
         if (xButtonCurrentlyPressed && !xButtonPreviouslyPressed && launcherRunning && !feedersRunning && !inCooldown) {
@@ -207,6 +212,7 @@ public class StarterBotTeleop extends OpMode {
         }
 
         // Telemetry for debugging
+        telemetry.addData("Status", "Driver: GP1 | Operator: GP2");
         telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
 

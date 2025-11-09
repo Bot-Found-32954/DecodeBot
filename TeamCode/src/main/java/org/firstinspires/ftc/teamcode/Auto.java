@@ -16,11 +16,11 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
 @Autonomous(name="StarterBotAuto", group="StarterBot")
 //@Disabled
-public class StarterBotAuto extends OpMode
+public class Auto extends OpMode
 {
 
     final double FEED_TIME = 0.40; //The feeder servos run this long when a shot is requested.
-    final double LAUNCHER_TARGET_VELOCITY = 1225;
+    final double LAUNCHER_TARGET_VELOCITY = 1295;
     final double LAUNCHER_MIN_VELOCITY = 1175;
     final double TIME_BETWEEN_SHOTS = 2;
     final double DRIVE_SPEED = 0.5;

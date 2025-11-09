@@ -30,9 +30,9 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 @TeleOp(name = "StarterBotTeleop", group = "StarterBot")
 //@Disabled
-public class StarterBotTeleop extends OpMode {
+public class Teleop extends OpMode {
     final double FEED_TIME_SECONDS = 0.40; // Time feeders run to launch one artifact
-    final double COOLDOWN_TIME_SECONDS = 0.67; // Cooldown time between launches
+    final double COOLDOWN_TIME_SECONDS = 0.5; // Cooldown time between launches
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
 
@@ -41,7 +41,7 @@ public class StarterBotTeleop extends OpMode {
      * to read the current speed of the motor and apply more or less power to keep it at a constant
      * velocity. Here we are setting the target velocity that the launcher should run at.
      */
-    final double LAUNCHER_TARGET_VELOCITY = -1200;
+    final double LAUNCHER_TARGET_VELOCITY = -1275;
 
     // Declare OpMode members.
     private DcMotor leftDrive = null;

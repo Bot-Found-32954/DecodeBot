@@ -13,14 +13,16 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 /*
  * This file includes a teleop (driver-controlled) file for the goBILDA® StarterBot for the
- * 2025-2026 FIRST® Tech Challenge season DECODE™. It leverages a differential/Skid-Steer
- * system for robot mobility, one high-speed motor driving two "launcher wheels", and two servos
- * which feed that launcher.
+ * 2025-2026 FIRST® Tech Challenge season DECODE™. It leverages a mecanum drive
+ * system for robot mobility (allows strafing), one high-speed motor driving two "launcher wheels",
+ * and two servos which feed that launcher.
  *
  * Modified controls:
  * GAMEPAD 1 (Driver):
  * - Left stick Y: Forward/backward
- * - Right stick X: Turn left/right
+ * - Right stick X: Turn left/right (REVERSED)
+ * - Left bumper: Strafe left
+ * - Right bumper: Strafe right
  *
  * GAMEPAD 2 (Operator):
  * - Y button: Start launcher motor continuously
@@ -43,9 +45,11 @@ public class Teleop extends OpMode {
      */
     final double LAUNCHER_TARGET_VELOCITY = -1275;
 
-    // Declare OpMode members.
-    private DcMotor leftDrive = null;
-    private DcMotor rightDrive = null;
+    // Declare OpMode members for mecanum drive
+    private DcMotor frontLeftDrive = null;
+    private DcMotor frontRightDrive = null;
+    private DcMotor backLeftDrive = null;
+    private DcMotor backRightDrive = null;
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
@@ -59,9 +63,11 @@ public class Teleop extends OpMode {
     private ElapsedTime feederTimer = new ElapsedTime();
     private boolean xButtonPreviouslyPressed = false;
 
-    // Setup a variable for each drive wheel to save power level for telemetry
-    double leftPower;
-    double rightPower;
+    // Setup variables for drive wheel power levels for telemetry
+    double frontLeftPower;
+    double frontRightPower;
+    double backLeftPower;
+    double backRightPower;
 
     /*
      * Code to run ONCE when the driver hits INIT
@@ -72,23 +78,24 @@ public class Teleop extends OpMode {
         /*
          * Initialize the hardware variables. Note that the strings used here as parameters
          * to 'get' must correspond to the names assigned during the robot configuration
-         * step.
+         * step. Standard mecanum naming convention.
          */
-        leftDrive = hardwareMap.get(DcMotor.class, "left_drive");
-        rightDrive = hardwareMap.get(DcMotor.class, "right_drive");
-        launcher = hardwareMap.get(DcMotorEx.class, "launcher");
-        leftFeeder = hardwareMap.get(CRServo.class, "left_feeder");
-        rightFeeder = hardwareMap.get(CRServo.class, "right_feeder");
+        frontLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_front");
+        frontRightDrive = hardwareMap.get(DcMotor.class, "right_drive_front");
+        backLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_back");
+        backRightDrive = hardwareMap.get(DcMotor.class, "right_drive_back");
+        launcher = hardwareMap.get(DcMotorEx.class, "launch_motor");
+        leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
+        rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
 
         /*
-         * To drive forward, most robots need the motor on one side to be reversed,
-         * because the axles point in opposite directions. Pushing the left stick forward
-         * MUST make robot go forward. So adjust these two lines based on your first test drive.
-         * Note: The settings here assume direct drive on left and right wheels. Gear
-         * Reduction or 90 Deg drives may require direction flips
+         * For mecanum drive, motors on the right side typically need to be reversed.
+         * Adjust these based on your robot's actual configuration after first test drive.
          */
-        leftDrive.setDirection(DcMotor.Direction.FORWARD);
-        rightDrive.setDirection(DcMotor.Direction.REVERSE);
+        frontLeftDrive.setDirection(DcMotor.Direction.REVERSE);
+        frontRightDrive.setDirection(DcMotor.Direction.FORWARD);
+        backLeftDrive.setDirection(DcMotor.Direction.REVERSE);
+        backRightDrive.setDirection(DcMotor.Direction.FORWARD);
 
         /*
          * Here we set our launcher to the RUN_USING_ENCODER run-mode.
@@ -104,8 +111,10 @@ public class Teleop extends OpMode {
          * slow down much faster when it is coasting. This creates a much more controllable
          * drivetrain. As the robot stops much quicker.
          */
-        leftDrive.setZeroPowerBehavior(BRAKE);
-        rightDrive.setZeroPowerBehavior(BRAKE);
+        frontLeftDrive.setZeroPowerBehavior(BRAKE);
+        frontRightDrive.setZeroPowerBehavior(BRAKE);
+        backLeftDrive.setZeroPowerBehavior(BRAKE);
+        backRightDrive.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
 
         /*
@@ -125,7 +134,7 @@ public class Teleop extends OpMode {
         /*
          * Tell the driver that initialization is complete.
          */
-        telemetry.addData("Status", "Initialized");
+        telemetry.addData("Status", "Initialized - Mecanum Drive");
     }
 
     /*
@@ -145,8 +154,16 @@ public class Teleop extends OpMode {
      */
     @Override
     public void loop() {
-        // GAMEPAD 1: Drive control
-        arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
+        // GAMEPAD 1: Mecanum drive control with shoulder button strafing
+        double strafe = 0;
+        if (gamepad1.left_bumper) {
+            strafe = -1.0; // Strafe left
+        } else if (gamepad1.right_bumper) {
+            strafe = 1.0; // Strafe right
+        }
+
+        // Negative sign on right_stick_x reverses the turning direction
+        mecanumDrive(-gamepad1.left_stick_y, strafe, gamepad1.right_stick_x);
 
         /*
          * GAMEPAD 2: Y button - Start launcher motor continuously
@@ -213,6 +230,8 @@ public class Teleop extends OpMode {
 
         // Telemetry for debugging
         telemetry.addData("Status", "Driver: GP1 | Operator: GP2");
+        telemetry.addData("Drive", "FL:%.2f FR:%.2f BL:%.2f BR:%.2f",
+                frontLeftPower, frontRightPower, backLeftPower, backRightPower);
         telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
 
@@ -241,14 +260,36 @@ public class Teleop extends OpMode {
     @Override
     public void stop() { }
 
-    void arcadeDrive(double forward, double rotate) {
-        leftPower = forward - rotate;
-        rightPower = forward + rotate;
+    /*
+     * Mecanum drive method
+     * @param forward - forward/backward movement (left stick Y)
+     * @param strafe - left/right strafing (shoulder buttons)
+     * @param rotate - rotation (right stick X)
+     */
+    void mecanumDrive(double forward, double strafe, double rotate) {
+        // Calculate power for each wheel using mecanum drive kinematics
+        frontLeftPower = forward + strafe + rotate;
+        frontRightPower = forward - strafe - rotate;
+        backLeftPower = forward - strafe + rotate;
+        backRightPower = forward + strafe - rotate;
 
-        /*
-         * Send calculated power to wheels
-         */
-        leftDrive.setPower(leftPower);
-        rightDrive.setPower(rightPower);
+        // Normalize wheel powers to ensure no value exceeds 1.0
+        double maxPower = Math.max(Math.abs(frontLeftPower),
+                Math.max(Math.abs(frontRightPower),
+                        Math.max(Math.abs(backLeftPower),
+                                Math.abs(backRightPower))));
+
+        if (maxPower > 1.0) {
+            frontLeftPower /= maxPower;
+            frontRightPower /= maxPower;
+            backLeftPower /= maxPower;
+            backRightPower /= maxPower;
+        }
+
+        // Send calculated power to wheels
+        frontLeftDrive.setPower(frontLeftPower);
+        frontRightDrive.setPower(frontRightPower);
+        backLeftDrive.setPower(backLeftPower);
+        backRightDrive.setPower(backRightPower);
     }
 }

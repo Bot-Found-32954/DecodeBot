@@ -2,14 +2,18 @@ package org.firstinspires.ftc.teamcode;
 
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.util.ElapsedTime;
+
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 /*
  * This file includes a teleop (driver-controlled) file for the goBILDA® StarterBot for the
@@ -19,10 +23,10 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  *
  * Modified controls:
  * GAMEPAD 1 (Driver):
- * - Left stick Y: Forward/backward
- * - Right stick X: Turn left/right (REVERSED)
- * - Left bumper: Strafe left
- * - Right bumper: Strafe right
+ * - Left stick Y: Forward/backward (field-centric)
+ * - Left stick X: Strafe left/right (field-centric)
+ * - Right stick X: Turn left/right
+ * - Options button: Reset heading (make current direction "forward")
  *
  * GAMEPAD 2 (Operator):
  * - Y button: Start launcher motor continuously
@@ -37,13 +41,14 @@ public class Teleop extends OpMode {
     final double COOLDOWN_TIME_SECONDS = 0.5; // Cooldown time between launches
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
+    final double DRIVE_SPEED_MULTIPLIER = 1.5; // Speed multiplier for mecanum drive (overdrive)
 
     /*
      * When we control our launcher motor, we are using encoders. These allow the control system
      * to read the current speed of the motor and apply more or less power to keep it at a constant
      * velocity. Here we are setting the target velocity that the launcher should run at.
      */
-    final double LAUNCHER_TARGET_VELOCITY = -1275;
+    final double LAUNCHER_TARGET_VELOCITY = 1250;
 
     // Declare OpMode members for mecanum drive
     private DcMotor frontLeftDrive = null;
@@ -53,6 +58,9 @@ public class Teleop extends OpMode {
     private DcMotorEx launcher = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
+
+    // IMU for field-centric drive
+    private com.qualcomm.robotcore.hardware.IMU imu = null;
 
     // Track whether launcher is running
     private boolean launcherRunning = false;
@@ -89,6 +97,15 @@ public class Teleop extends OpMode {
         rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
 
         /*
+         * Initialize the IMU with standard parameters for field-centric drive
+         */
+        imu = hardwareMap.get(IMU.class, "imu");
+        IMU.Parameters parameters = new IMU.Parameters(new com.qualcomm.hardware.rev.RevHubOrientationOnRobot(
+                RevHubOrientationOnRobot.LogoFacingDirection.RIGHT,
+                RevHubOrientationOnRobot.UsbFacingDirection.BACKWARD));
+        imu.initialize(parameters);
+
+        /*
          * For mecanum drive, motors on the right side typically need to be reversed.
          * Adjust these based on your robot's actual configuration after first test drive.
          */
@@ -105,6 +122,7 @@ public class Teleop extends OpMode {
          * through any wiring.
          */
         launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        launcher.setDirection(DcMotorSimple.Direction.REVERSE);
 
         /*
          * Setting zeroPowerBehavior to BRAKE enables a "brake mode". This causes the motor to
@@ -154,16 +172,13 @@ public class Teleop extends OpMode {
      */
     @Override
     public void loop() {
-        // GAMEPAD 1: Mecanum drive control with shoulder button strafing
-        double strafe = 0;
-        if (gamepad1.left_bumper) {
-            strafe = -1.0; // Strafe left
-        } else if (gamepad1.right_bumper) {
-            strafe = 1.0; // Strafe right
+        // GAMEPAD 1: Reset heading with options button
+        if (gamepad1.options) {
+            imu.resetYaw();
         }
 
-        // Negative sign on right_stick_x reverses the turning direction
-        mecanumDrive(-gamepad1.left_stick_y, strafe, gamepad1.right_stick_x);
+        // GAMEPAD 1: Field-centric mecanum drive control
+        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x);
 
         /*
          * GAMEPAD 2: Y button - Start launcher motor continuously
@@ -230,6 +245,7 @@ public class Teleop extends OpMode {
 
         // Telemetry for debugging
         telemetry.addData("Status", "Driver: GP1 | Operator: GP2");
+        telemetry.addData("Heading", "%.2f degrees", Math.toDegrees(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS)));
         telemetry.addData("Drive", "FL:%.2f FR:%.2f BL:%.2f BR:%.2f",
                 frontLeftPower, frontRightPower, backLeftPower, backRightPower);
         telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
@@ -261,17 +277,30 @@ public class Teleop extends OpMode {
     public void stop() { }
 
     /*
-     * Mecanum drive method
+     * Field-centric mecanum drive method
+     * Transforms driver inputs based on robot's heading so forward is always forward relative to field
      * @param forward - forward/backward movement (left stick Y)
-     * @param strafe - left/right strafing (shoulder buttons)
+     * @param strafe - left/right strafing (left stick X)
      * @param rotate - rotation (right stick X)
      */
     void mecanumDrive(double forward, double strafe, double rotate) {
+        // Get robot heading from IMU
+        double botHeading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
+
+        // Rotate the movement direction based on robot heading for field-centric control
+        double rotatedForward = forward * Math.cos(botHeading) - strafe * Math.sin(botHeading);
+        double rotatedStrafe = forward * Math.sin(botHeading) + strafe * Math.cos(botHeading);
+
+        // Apply speed multiplier for overdrive
+        rotatedForward *= DRIVE_SPEED_MULTIPLIER;
+        rotatedStrafe *= DRIVE_SPEED_MULTIPLIER;
+        rotate *= DRIVE_SPEED_MULTIPLIER;
+
         // Calculate power for each wheel using mecanum drive kinematics
-        frontLeftPower = forward + strafe + rotate;
-        frontRightPower = forward - strafe - rotate;
-        backLeftPower = forward - strafe + rotate;
-        backRightPower = forward + strafe - rotate;
+        frontLeftPower = rotatedForward + rotatedStrafe + rotate;
+        frontRightPower = rotatedForward - rotatedStrafe - rotate;
+        backLeftPower = rotatedForward - rotatedStrafe + rotate;
+        backRightPower = rotatedForward + rotatedStrafe - rotate;
 
         // Normalize wheel powers to ensure no value exceeds 1.0
         double maxPower = Math.max(Math.abs(frontLeftPower),

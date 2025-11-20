@@ -14,7 +14,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
-@Autonomous(name="MecanumBotAuto", group="MecanumBot")
+@Autonomous(name="StarterBotAuto", group="MecanumBot")
 //@Disabled
 public class Auto extends OpMode
 {
@@ -24,20 +24,18 @@ public class Auto extends OpMode
     final double LAUNCHER_MIN_VELOCITY = 1175;
     final double TIME_BETWEEN_SHOTS = 2;
     final double DRIVE_SPEED = 0.5;
-    final double ROTATE_SPEED = 0.2;
+    final double STRAFE_SPEED = 0.5;
+    final double TURN_SPEED = 0.4;
     final double WHEEL_DIAMETER_MM = 96;
     final double ENCODER_TICKS_PER_REV = 537.7;
     final double TICKS_PER_MM = (ENCODER_TICKS_PER_REV / (WHEEL_DIAMETER_MM * Math.PI));
-    final double TRACK_WIDTH_MM = 404;
+    final double ROBOT_WIDTH_MM = 450; // Adjust this to your robot's width (track width)
 
     int shotsToFire = 3; //The number of shots to fire in this auto.
 
-    double robotRotationAngle = 60;
     private final ElapsedTime shotTimer = new ElapsedTime();
     private final ElapsedTime feederTimer = new ElapsedTime();
     private final ElapsedTime driveTimer = new ElapsedTime();
-    private final ElapsedTime straightTimer = new ElapsedTime();
-    private final ElapsedTime turnTimer = new ElapsedTime();
 
     // Declare OpMode members for mecanum wheels
     private DcMotor frontLeftDrive = null;
@@ -62,10 +60,8 @@ public class Auto extends OpMode
         WAIT_FOR_LAUNCH,
         DRIVING_AWAY_FROM_GOAL,
         ROTATING,
-        DRIVING_OFF_LINE,
+        STRAFING,
         NO_LAUNCH_STRAIGHT,
-        NO_LAUNCH_TURN,
-        NO_LAUNCH_FINAL,
         COMPLETE;
     }
 
@@ -85,8 +81,7 @@ public class Auto extends OpMode
     private enum AutoMode {
         LAUNCH_RED,
         LAUNCH_BLUE,
-        NO_LAUNCH_RED,
-        NO_LAUNCH_BLUE;
+        NO_LAUNCH;
     }
 
     /*
@@ -125,10 +120,10 @@ public class Auto extends OpMode
          * For mecanum wheels, we need to reverse the right side motors.
          * This assumes standard mecanum wheel orientation.
          */
-        frontLeftDrive.setDirection(DcMotor.Direction.FORWARD);
-        frontRightDrive.setDirection(DcMotor.Direction.REVERSE);
-        backLeftDrive.setDirection(DcMotor.Direction.FORWARD);
-        backRightDrive.setDirection(DcMotor.Direction.REVERSE);
+        frontLeftDrive.setDirection(DcMotor.Direction.REVERSE);
+        frontRightDrive.setDirection(DcMotor.Direction.FORWARD);
+        backLeftDrive.setDirection(DcMotor.Direction.REVERSE);
+        backRightDrive.setDirection(DcMotor.Direction.FORWARD);
 
         /*
          * Here we reset the encoders on our drive motors before we start moving.
@@ -195,10 +190,10 @@ public class Auto extends OpMode
             autoMode = AutoMode.LAUNCH_BLUE;
             alliance = Alliance.BLUE;
         } else if (gamepad1.y) {
-            autoMode = AutoMode.NO_LAUNCH_RED;
+            autoMode = AutoMode.NO_LAUNCH;
             alliance = Alliance.RED;
         } else if (gamepad1.a) {
-            autoMode = AutoMode.NO_LAUNCH_BLUE;
+            autoMode = AutoMode.NO_LAUNCH;
             alliance = Alliance.BLUE;
         }
 
@@ -207,6 +202,7 @@ public class Auto extends OpMode
         telemetry.addData("Press Y", "for NO LAUNCH RED");
         telemetry.addData("Press A", "for NO LAUNCH BLUE");
         telemetry.addData("Selected Mode", autoMode);
+        telemetry.addData("Alliance", alliance);
     }
 
     /*
@@ -215,9 +211,8 @@ public class Auto extends OpMode
     @Override
     public void start() {
         // Set initial state based on selected mode
-        if (autoMode == AutoMode.NO_LAUNCH_RED || autoMode == AutoMode.NO_LAUNCH_BLUE) {
+        if (autoMode == AutoMode.NO_LAUNCH) {
             autonomousState = AutonomousState.NO_LAUNCH_STRAIGHT;
-            straightTimer.reset();
         } else {
             autonomousState = AutonomousState.LAUNCH;
         }
@@ -261,101 +256,32 @@ public class Auto extends OpMode
                 break;
 
             case ROTATING:
-                //RED now rotates -95 degrees, BLUE now rotates 95 degrees
-                if(alliance == Alliance.RED){
-                    robotRotationAngle = -95;
-                } else if (alliance == Alliance.BLUE){
-                    robotRotationAngle = 95;
-                }
+                // Rotate 20 degrees for RED, -20 degrees for BLUE
+                double rotationDegrees = (alliance == Alliance.RED) ? 20 : -20;
 
-                if(rotate(ROTATE_SPEED, robotRotationAngle, AngleUnit.DEGREES,1)){
+                if(rotate(TURN_SPEED, rotationDegrees, 1)){
                     frontLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
                     frontRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
                     backLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
                     backRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    autonomousState = AutonomousState.DRIVING_OFF_LINE;
+                    autonomousState = AutonomousState.STRAFING;
                 }
                 break;
 
-            case DRIVING_OFF_LINE:
-                if(drive(DRIVE_SPEED, -59, DistanceUnit.INCH, 1)){
+            case STRAFING:
+                // Strafe right for RED, strafe left for BLUE
+                double strafeDistance = (alliance == Alliance.RED) ? 23 : -23;
+
+                if(strafe(STRAFE_SPEED, strafeDistance, DistanceUnit.INCH, 1)){
                     autonomousState = AutonomousState.COMPLETE;
                 }
                 break;
 
             /*
-             * NO LAUNCH mode states - drives straight for 4 seconds, then turns and drives for 6 seconds
+             * NO LAUNCH mode - just drives straight forward 20 inches
              */
             case NO_LAUNCH_STRAIGHT:
-                // Drive straight for 4 seconds
-                frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                frontRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-
-                frontLeftDrive.setPower(DRIVE_SPEED);
-                frontRightDrive.setPower(DRIVE_SPEED);
-                backLeftDrive.setPower(DRIVE_SPEED);
-                backRightDrive.setPower(DRIVE_SPEED);
-
-                if (straightTimer.seconds() > 4.0) {
-                    frontLeftDrive.setPower(0);
-                    frontRightDrive.setPower(0);
-                    backLeftDrive.setPower(0);
-                    backRightDrive.setPower(0);
-                    turnTimer.reset();
-                    autonomousState = AutonomousState.NO_LAUNCH_TURN;
-                }
-                break;
-
-            case NO_LAUNCH_TURN:
-                // Turn right for RED, turn left for BLUE, then move to final drive
-                frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                frontRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-
-                if (alliance == Alliance.RED) {
-                    // Turn right - left side forward, right side backward
-                    frontLeftDrive.setPower(ROTATE_SPEED);
-                    backLeftDrive.setPower(ROTATE_SPEED);
-                    frontRightDrive.setPower(-ROTATE_SPEED);
-                    backRightDrive.setPower(-ROTATE_SPEED);
-                } else {
-                    // Turn left - left side backward, right side forward
-                    frontLeftDrive.setPower(-ROTATE_SPEED);
-                    backLeftDrive.setPower(-ROTATE_SPEED);
-                    frontRightDrive.setPower(ROTATE_SPEED);
-                    backRightDrive.setPower(ROTATE_SPEED);
-                }
-
-                if (turnTimer.seconds() > 1.0) {
-                    frontLeftDrive.setPower(0);
-                    frontRightDrive.setPower(0);
-                    backLeftDrive.setPower(0);
-                    backRightDrive.setPower(0);
-                    driveTimer.reset();
-                    autonomousState = AutonomousState.NO_LAUNCH_FINAL;
-                }
-                break;
-
-            case NO_LAUNCH_FINAL:
-                // Drive forward for 6 seconds
-                frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                frontRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-                backRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-
-                frontLeftDrive.setPower(DRIVE_SPEED);
-                frontRightDrive.setPower(DRIVE_SPEED);
-                backLeftDrive.setPower(DRIVE_SPEED);
-                backRightDrive.setPower(DRIVE_SPEED);
-
-                if (driveTimer.seconds() > 6.0) {
-                    frontLeftDrive.setPower(0);
-                    frontRightDrive.setPower(0);
-                    backLeftDrive.setPower(0);
-                    backRightDrive.setPower(0);
+                if(drive(DRIVE_SPEED, 35, DistanceUnit.INCH, 1)){
                     autonomousState = AutonomousState.COMPLETE;
                 }
                 break;
@@ -365,6 +291,7 @@ public class Auto extends OpMode
          * Telemetry updated for mecanum wheels
          */
         telemetry.addData("AutoMode", autoMode);
+        telemetry.addData("Alliance", alliance);
         telemetry.addData("AutoState", autonomousState);
         telemetry.addData("LauncherState", launchState);
         telemetry.addData("FL Position", frontLeftDrive.getCurrentPosition());
@@ -459,39 +386,87 @@ public class Auto extends OpMode
     }
 
     /**
-     * Rotates the robot using mecanum wheels.
+     * Strafes the robot left/right using mecanum wheels.
      * @param speed From 0-1
-     * @param angle the amount that the robot should rotate
-     * @param angleUnit the unit that angle is in
+     * @param distance In specified unit (positive = right, negative = left)
+     * @param distanceUnit the unit of measurement for distance
      * @param holdSeconds the number of seconds to wait at position before returning true.
-     * @return True if the motors are within tolerance of the target position for more than
-     *         holdSeconds. False otherwise.
+     * @return "true" if the motors are within tolerance of the target position for more than
+     * holdSeconds. "false" otherwise.
      */
-    boolean rotate(double speed, double angle, AngleUnit angleUnit, double holdSeconds){
+    boolean strafe(double speed, double distance, DistanceUnit distanceUnit, double holdSeconds) {
         final double TOLERANCE_MM = 10;
 
-        double targetMm = angleUnit.toRadians(angle)*(TRACK_WIDTH_MM/2);
+        double targetPosition = (distanceUnit.toMm(distance) * TICKS_PER_MM);
 
-        // For rotation: left side goes opposite direction of right side
-        double leftTargetPosition = -(targetMm*TICKS_PER_MM);
-        double rightTargetPosition = targetMm*TICKS_PER_MM;
-
-        frontLeftDrive.setTargetPosition((int) leftTargetPosition);
-        backLeftDrive.setTargetPosition((int) leftTargetPosition);
-        frontRightDrive.setTargetPosition((int) rightTargetPosition);
-        backRightDrive.setTargetPosition((int) rightTargetPosition);
+        // For strafing right: FL and BR go forward, FR and BL go backward
+        // For strafing left: FL and BR go backward, FR and BL go forward
+        frontLeftDrive.setTargetPosition((int) targetPosition);
+        frontRightDrive.setTargetPosition((int) -targetPosition);
+        backLeftDrive.setTargetPosition((int) -targetPosition);
+        backRightDrive.setTargetPosition((int) targetPosition);
 
         frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
         frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
         backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
 
         frontLeftDrive.setPower(speed);
-        backLeftDrive.setPower(speed);
         frontRightDrive.setPower(speed);
+        backLeftDrive.setPower(speed);
         backRightDrive.setPower(speed);
 
-        if((Math.abs(leftTargetPosition - frontLeftDrive.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
+        // Check if front left wheel is within tolerance
+        if(Math.abs(targetPosition - frontLeftDrive.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
+            driveTimer.reset();
+        }
+
+        return (driveTimer.seconds() > holdSeconds);
+    }
+
+    /**
+     * Rotates the robot in place.
+     * @param speed From 0-1
+     * @param degrees Degrees to rotate (positive = clockwise, negative = counter-clockwise)
+     * @param holdSeconds the number of seconds to wait at position before returning true.
+     * @return "true" if the motors are within tolerance of the target position for more than
+     * holdSeconds. "false" otherwise.
+     */
+    boolean rotate(double speed, double degrees, double holdSeconds) {
+        final double TOLERANCE_MM = 10;
+
+        // Calculate arc length for rotation: arc = (degrees/360) * pi * robotWidth
+        double arcLengthMm = (Math.abs(degrees) / 360.0) * Math.PI * ROBOT_WIDTH_MM;
+        double targetTicks = arcLengthMm * TICKS_PER_MM;
+
+        // For clockwise rotation (positive degrees): left side forward, right side backward
+        // For counter-clockwise rotation (negative degrees): left side backward, right side forward
+        if (degrees > 0) {
+            // Clockwise
+            frontLeftDrive.setTargetPosition((int) targetTicks);
+            frontRightDrive.setTargetPosition((int) -targetTicks);
+            backLeftDrive.setTargetPosition((int) targetTicks);
+            backRightDrive.setTargetPosition((int) -targetTicks);
+        } else {
+            // Counter-clockwise
+            frontLeftDrive.setTargetPosition((int) -targetTicks);
+            frontRightDrive.setTargetPosition((int) targetTicks);
+            backLeftDrive.setTargetPosition((int) -targetTicks);
+            backRightDrive.setTargetPosition((int) targetTicks);
+        }
+
+        frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+
+        frontLeftDrive.setPower(speed);
+        frontRightDrive.setPower(speed);
+        backLeftDrive.setPower(speed);
+        backRightDrive.setPower(speed);
+
+        // Check if front left wheel is within tolerance
+        if(Math.abs(Math.abs(frontLeftDrive.getTargetPosition()) - Math.abs(frontLeftDrive.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
             driveTimer.reset();
         }
 

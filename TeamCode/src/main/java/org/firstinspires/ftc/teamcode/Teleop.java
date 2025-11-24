@@ -29,9 +29,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  * - Options button: Reset heading (make current direction "forward")
  *
  * GAMEPAD 2 (Operator):
- * - Y button: Start launcher motor continuously
- * - B button: Stop launcher motor
- * - X button: Run feeders (only works if launcher is running)
+ * - Right trigger: Hold to run launcher motor (releases when let go)
+ * - X button: Run feeders (only works if launcher has been running for 1.5+ seconds)
  */
 
 @TeleOp(name = "StarterBotTeleop", group = "StarterBot")
@@ -39,9 +38,10 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 public class Teleop extends OpMode {
     final double FEED_TIME_SECONDS = 0.40; // Time feeders run to launch one artifact
     final double COOLDOWN_TIME_SECONDS = 0.5; // Cooldown time between launches
+    final double LAUNCHER_WARMUP_TIME = 1.5; // Time for launcher to reach full speed before feeding
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
-    final double DRIVE_SPEED_MULTIPLIER = 1.5; // Speed multiplier for mecanum drive (overdrive)
+    final double DRIVE_SPEED_MULTIPLIER = 2; // Speed multiplier for mecanum drive (overclock)
 
     /*
      * When we control our launcher motor, we are using encoders. These allow the control system
@@ -64,6 +64,7 @@ public class Teleop extends OpMode {
 
     // Track whether launcher is running
     private boolean launcherRunning = false;
+    private ElapsedTime launcherTimer = new ElapsedTime();
 
     // Track feeder state
     private boolean feedersRunning = false;
@@ -181,32 +182,38 @@ public class Teleop extends OpMode {
         mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x);
 
         /*
-         * GAMEPAD 2: Y button - Start launcher motor continuously
+         * GAMEPAD 2: Right trigger - Hold to run launcher motor, release to stop
          */
-        if (gamepad2.y) {
-            launcherRunning = true;
+        if (gamepad2.right_trigger > 0.1) { // Trigger threshold to avoid accidental activation
+            if (!launcherRunning) {
+                // Just started the launcher
+                launcherRunning = true;
+                launcherTimer.reset();
+            }
             launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-        }
-
-        /*
-         * GAMEPAD 2: B button - Stop launcher motor
-         */
-        if (gamepad2.b) {
-            launcherRunning = false;
+        } else {
+            // Trigger released, stop launcher
+            if (launcherRunning) {
+                launcherRunning = false;
+            }
             launcher.setPower(0);
             launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         }
 
+        // Check if launcher has warmed up (been running for at least 1.5 seconds)
+        boolean launcherWarmedUp = launcherRunning && (launcherTimer.seconds() >= LAUNCHER_WARMUP_TIME);
+
         /*
-         * GAMEPAD 2: X button - Run feeders for a timed duration (only if launcher is running)
+         * GAMEPAD 2: X button - Run feeders for a timed duration
+         * Only works if launcher has been warmed up for 1.5+ seconds
          * Detects button press (not hold) to start feeding cycle
          * Includes cooldown between launches
          */
         boolean xButtonCurrentlyPressed = gamepad2.x;
 
         // Detect X button press (transition from not pressed to pressed)
-        if (xButtonCurrentlyPressed && !xButtonPreviouslyPressed && launcherRunning && !feedersRunning && !inCooldown) {
+        if (xButtonCurrentlyPressed && !xButtonPreviouslyPressed && launcherWarmedUp && !feedersRunning && !inCooldown) {
             // Start feeding cycle
             feedersRunning = true;
             feederTimer.reset();
@@ -249,6 +256,16 @@ public class Teleop extends OpMode {
         telemetry.addData("Drive", "FL:%.2f FR:%.2f BL:%.2f BR:%.2f",
                 frontLeftPower, frontRightPower, backLeftPower, backRightPower);
         telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
+
+        if (launcherRunning) {
+            double warmupTime = launcherTimer.seconds();
+            if (warmupTime < LAUNCHER_WARMUP_TIME) {
+                telemetry.addData("Launcher Warmup", "%.1f / %.1f sec", warmupTime, LAUNCHER_WARMUP_TIME);
+            } else {
+                telemetry.addData("Launcher", "READY TO FEED");
+            }
+        }
+
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
 
         String feederStatus;
@@ -256,8 +273,12 @@ public class Teleop extends OpMode {
             feederStatus = "FEEDING";
         } else if (inCooldown) {
             feederStatus = "COOLDOWN";
-        } else {
+        } else if (launcherRunning && launcherTimer.seconds() < LAUNCHER_WARMUP_TIME) {
+            feederStatus = "WARMING UP";
+        } else if (launcherRunning) {
             feederStatus = "READY";
+        } else {
+            feederStatus = "LAUNCHER OFF";
         }
         telemetry.addData("Feeders Status", feederStatus);
 

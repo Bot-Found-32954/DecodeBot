@@ -2,321 +2,337 @@ package org.firstinspires.ftc.teamcode;
 
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
+import com.qualcomm.hardware.sparkfun.SparkFunOTOS;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
+
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
-@Autonomous(name="StarterBotAuto", group="MecanumBot")
+@Autonomous(name="StarterBotAuto_OTOS_3Piles", group="MecanumBot")
 //@Disabled
-public class Auto extends OpMode
-{
+public class AutoOtos3Piles extends OpMode {
 
-    final double FEED_TIME = 0.40; //The feeder servos run this long when a shot is requested.
+    // ===== Shooter constants (from your existing auto) =====
+    final double FEED_TIME = 0.40;
     final double LAUNCHER_TARGET_VELOCITY = 1295;
     final double LAUNCHER_MIN_VELOCITY = 1175;
-    final double TIME_BETWEEN_SHOTS = 2;
-    final double DRIVE_SPEED = 0.5;
-    final double STRAFE_SPEED = 0.5;
-    final double TURN_SPEED = 0.4;
-    final double WHEEL_DIAMETER_MM = 96;
-    final double ENCODER_TICKS_PER_REV = 537.7;
-    final double TICKS_PER_MM = (ENCODER_TICKS_PER_REV / (WHEEL_DIAMETER_MM * Math.PI));
-    final double ROBOT_WIDTH_MM = 450; // Adjust this to your robot's width (track width)
+    final double TIME_BETWEEN_SHOTS = 2.0;
 
-    int shotsToFire = 3; //The number of shots to fire in this auto.
+    // ===== OTOS drive tuning (you MUST tune these) =====
+    final double kP_XY = 0.035;        // inches -> power
+    final double kP_H  = 0.012;        // degrees -> power
+    final double MAX_TRANSLATE = 0.55;
+    final double MAX_ROTATE    = 0.40;
 
-    private final ElapsedTime shotTimer = new ElapsedTime();
+    final double POS_TOL_IN    = 1.5;  // inches
+    final double HEAD_TOL_DEG  = 5.0;  // degrees
+    final double HOLD_SEC      = 0.20; // must stay in tolerance this long
+
+    // ===== Pile coordinates (PLACEHOLDERS) =====
+    // Coordinate frame: we force start/shoot pose to (0,0,0) at start().
+    // +Y = “forward” from your start, +X = “right” from your start.
+    //
+    // IMPORTANT: These are just placeholders. You should print OTOS pose in TeleOp
+    // and record the real x/y when your intake is centered on each pile.
+    //
+    // If the piles are on your left for red and right for blue, you can flip X with alliance.
+    final double[][] PILES_COMMON = new double[][] {
+            // x,   y,    h  (h is where you want to end up; 0 = same heading as start)
+            {  0,  24,   0 },  // pile 1 (closest)
+            {  0,  48,   0 },  // pile 2
+            {  0,  72,   0 },  // pile 3 (furthest)
+    };
+
+    // ===== Hardware =====
+    private DcMotor frontLeftDrive, frontRightDrive, backLeftDrive, backRightDrive;
+    private DcMotorEx launcher;
+    private CRServo leftFeeder, rightFeeder;
+
+    // OTOS
+    private SparkFunOTOS otos;
+
+    // ===== Timers =====
+    private final ElapsedTime shotTimer   = new ElapsedTime();
     private final ElapsedTime feederTimer = new ElapsedTime();
-    private final ElapsedTime driveTimer = new ElapsedTime();
+    private final ElapsedTime holdTimer   = new ElapsedTime();
+    private final ElapsedTime intakeTimer = new ElapsedTime();
 
-    // Declare OpMode members for mecanum wheels
-    private DcMotor frontLeftDrive = null;
-    private DcMotor frontRightDrive = null;
-    private DcMotor backLeftDrive = null;
-    private DcMotor backRightDrive = null;
-    private DcMotorEx launcher = null;
-    private CRServo leftFeeder = null;
-    private CRServo rightFeeder = null;
+    // ===== Existing launch state machine =====
+    private enum LaunchState { IDLE, PREPARE, LAUNCH }
+    private LaunchState launchState = LaunchState.IDLE;
 
-    private enum LaunchState {
-        IDLE,
-        PREPARE,
-        LAUNCH,
+    // ===== Auto state machine =====
+    private enum AutoState {
+        SHOOT_PRELOAD_3,
+        GO_TO_PILE,
+        INTAKE_3,
+        RETURN_TO_SHOOT,
+        SHOOT_TRIP_3,
+        NEXT_PILE,
+        COMPLETE
     }
+    private AutoState autoState = AutoState.SHOOT_PRELOAD_3;
 
+    private int shotsRemaining = 3;
+    private int pileIndex = 0;
 
-    private LaunchState launchState;
-
-    private enum AutonomousState {
-        LAUNCH,
-        WAIT_FOR_LAUNCH,
-        DRIVING_AWAY_FROM_GOAL,
-        ROTATING,
-        STRAFING,
-        NO_LAUNCH_STRAIGHT,
-        COMPLETE;
-    }
-
-    private AutonomousState autonomousState;
-
-    /*
-     * Here we create an enum not to create a state machine, but to capture which alliance we are on.
-     */
-    private enum Alliance {
-        RED,
-        BLUE;
-    }
-
-    /*
-     * Enum to select autonomous mode
-     */
-    private enum AutoMode {
-        LAUNCH_RED,
-        LAUNCH_BLUE,
-        NO_LAUNCH;
-    }
-
-    /*
-     * When we create the instance of our enum we can also assign a default state.
-     */
+    private enum Alliance { RED, BLUE }
     private Alliance alliance = Alliance.RED;
-    private AutoMode autoMode = AutoMode.LAUNCH_RED;
 
-    /*
-     * This code runs ONCE when the driver hits INIT.
-     */
     @Override
     public void init() {
-        /*
-         * Here we set the first step of our autonomous state machine by setting autoStep = AutoStep.LAUNCH.
-         * Later in our code, we will progress through the state machine by moving to other enum members.
-         * We do the same for our launcher state machine, setting it to IDLE before we use it later.
-         */
-        autonomousState = AutonomousState.LAUNCH;
-        launchState = LaunchState.IDLE;
-
-
-        /*
-         * Initialize the hardware variables
-         */
-        frontLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_front");
+        // Drive motors
+        frontLeftDrive  = hardwareMap.get(DcMotor.class, "left_drive_front");
         frontRightDrive = hardwareMap.get(DcMotor.class, "right_drive_front");
-        backLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_back");
-        backRightDrive = hardwareMap.get(DcMotor.class, "right_drive_back");
-        launcher = hardwareMap.get(DcMotorEx.class, "launch_motor");
+        backLeftDrive   = hardwareMap.get(DcMotor.class, "left_drive_back");
+        backRightDrive  = hardwareMap.get(DcMotor.class, "right_drive_back");
+
+        // Shooter hardware
+        launcher   = hardwareMap.get(DcMotorEx.class, "launch_motor");
         leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
-        rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
+        rightFeeder= hardwareMap.get(CRServo.class, "right_servo");
 
-
-        /*
-         * For mecanum wheels, we need to reverse the right side motors.
-         * This assumes standard mecanum wheel orientation.
-         */
+        // Motor directions (match your code)
         frontLeftDrive.setDirection(DcMotor.Direction.REVERSE);
         frontRightDrive.setDirection(DcMotor.Direction.FORWARD);
         backLeftDrive.setDirection(DcMotor.Direction.REVERSE);
         backRightDrive.setDirection(DcMotor.Direction.FORWARD);
 
-        /*
-         * Here we reset the encoders on our drive motors before we start moving.
-         */
-        frontLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        frontRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        backLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        backRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-
-        /*
-         * Setting zeroPowerBehavior to BRAKE enables a "brake mode." This causes the motor to
-         * slow down much faster when it is coasting. This creates a much more controllable
-         * drivetrain, as the robot stops much quicker.
-         */
+        // Brake
         frontLeftDrive.setZeroPowerBehavior(BRAKE);
         frontRightDrive.setZeroPowerBehavior(BRAKE);
         backLeftDrive.setZeroPowerBehavior(BRAKE);
         backRightDrive.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
 
-        /*
-         * Here we set our launcher to the RUN_USING_ENCODER runmode.
-         */
+        // Run drive open-loop (OTOS provides feedback)
+        frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        frontRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+        // Launcher velocity control
         launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-
-        /*
-         * Here we set the aforementioned PID coefficients.
-         */
-        launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER,new PIDFCoefficients(300,0,0,10));
-
-        /*
-         * Much like our drivetrain motors, we set the left feeder servo to reverse so that they
-         * both work to feed the ball into the robot.
-         */
-        leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
-
-        // set launcher to spin the right way
+        launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(300, 0, 0, 10));
         launcher.setDirection(DcMotorSimple.Direction.REVERSE);
 
-        // Tell the driver that initialization is complete.
-        telemetry.addData("Status", "Initialized");
+        leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
+        leftFeeder.setPower(0);
+        rightFeeder.setPower(0);
+
+        // OTOS
+        otos = hardwareMap.get(SparkFunOTOS.class, "sensor_otos");
+        initOTOS();
+
+        telemetry.addData("Status", "Initialized (OTOS + Shooter)");
     }
 
-    /*
-     * This code runs REPEATEDLY after the driver hits INIT, but before they hit START.
-     */
     @Override
     public void init_loop() {
-        /*
-         * We also set the servo power to 0 here to make sure that the servo controller is booted
-         * up and ready to go.
-         */
-        rightFeeder.setPower(0);
-        leftFeeder.setPower(0);
+        // simple alliance select if you want it
+        if (gamepad1.b) alliance = Alliance.RED;
+        if (gamepad1.x) alliance = Alliance.BLUE;
 
-
-        /*
-         * Here we allow the driver to select which mode using the gamepad.
-         */
-        if (gamepad1.b) {
-            autoMode = AutoMode.LAUNCH_RED;
-            alliance = Alliance.RED;
-        } else if (gamepad1.x) {
-            autoMode = AutoMode.LAUNCH_BLUE;
-            alliance = Alliance.BLUE;
-        } else if (gamepad1.y) {
-            autoMode = AutoMode.NO_LAUNCH;
-            alliance = Alliance.RED;
-        } else if (gamepad1.a) {
-            autoMode = AutoMode.NO_LAUNCH;
-            alliance = Alliance.BLUE;
-        }
-
-        telemetry.addData("Press B", "for LAUNCH RED");
-        telemetry.addData("Press X", "for LAUNCH BLUE");
-        telemetry.addData("Press Y", "for NO LAUNCH RED");
-        telemetry.addData("Press A", "for NO LAUNCH BLUE");
-        telemetry.addData("Selected Mode", autoMode);
         telemetry.addData("Alliance", alliance);
+        telemetry.addData("Press B", "RED");
+        telemetry.addData("Press X", "BLUE");
     }
 
-    /*
-     * This code runs ONCE when the driver hits START.
-     */
     @Override
     public void start() {
-        // Set initial state based on selected mode
-        if (autoMode == AutoMode.NO_LAUNCH) {
-            autonomousState = AutonomousState.NO_LAUNCH_STRAIGHT;
-        } else {
-            autonomousState = AutonomousState.LAUNCH;
-        }
+        // Define start shooting position as (0,0,0)
+        otos.resetTracking();
+        otos.setPosition(new SparkFunOTOS.Pose2D(0, 0, 0));
+
+        autoState = AutoState.SHOOT_PRELOAD_3;
+        pileIndex = 0;
+
+        shotsRemaining = 3;
+        launchState = LaunchState.IDLE;
+        holdTimer.reset();
     }
 
-    /*
-     * This code runs REPEATEDLY after the driver hits START but before they hit STOP.
-     */
     @Override
     public void loop() {
-        switch (autonomousState){
-            case LAUNCH:
-                launch(true);
-                autonomousState = AutonomousState.WAIT_FOR_LAUNCH;
-                break;
+        SparkFunOTOS.Pose2D p = otos.getPosition();
 
-            case WAIT_FOR_LAUNCH:
-                if(launch(false)) {
-                    shotsToFire -= 1;
-                    if(shotsToFire > 0) {
-                        autonomousState = AutonomousState.LAUNCH;
-                    } else {
-                        frontLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                        frontRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                        backLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                        backRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                        launcher.setVelocity(0);
-                        autonomousState = AutonomousState.DRIVING_AWAY_FROM_GOAL;
-                    }
+        switch (autoState) {
+            case SHOOT_PRELOAD_3:
+                if (shootN(3)) {
+                    autoState = AutoState.GO_TO_PILE;
+                    holdTimer.reset();
                 }
                 break;
 
-            case DRIVING_AWAY_FROM_GOAL:
-                if(drive(DRIVE_SPEED, -20, DistanceUnit.INCH, 1)){
-                    frontLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    frontRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    backLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    backRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    autonomousState = AutonomousState.ROTATING;
+            case GO_TO_PILE: {
+                double[] tgt = getPileTarget(pileIndex);
+                if (goToPose(tgt[0], tgt[1], tgt[2])) {
+                    stopDrive();
+                    // Start placeholder intake
+                    intakeStart();          // <-- placeholder (no code)
+                    intakeTimer.reset();
+                    autoState = AutoState.INTAKE_3;
+                }
+                break;
+            }
+
+            case INTAKE_3:
+                // Placeholder: “collect 3” just waits (replace later with sensor logic)
+                if (intakeTimer.seconds() >= 1.0) {
+                    intakeStop();           // <-- placeholder (no code)
+                    autoState = AutoState.RETURN_TO_SHOOT;
+                    holdTimer.reset();
                 }
                 break;
 
-            case ROTATING:
-                // Rotate 20 degrees for RED, -20 degrees for BLUE
-                double rotationDegrees = (alliance == Alliance.RED) ? 20 : -20;
-
-                if(rotate(TURN_SPEED, rotationDegrees, 1)){
-                    frontLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    frontRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    backLeftDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    backRightDrive.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-                    autonomousState = AutonomousState.STRAFING;
+            case RETURN_TO_SHOOT:
+                // Return to start position AND start heading, so shooting is aligned like preload shots
+                if (goToPose(0, 0, 0)) {
+                    stopDrive();
+                    shotsRemaining = 3;
+                    launchState = LaunchState.IDLE;
+                    autoState = AutoState.SHOOT_TRIP_3;
                 }
                 break;
 
-            case STRAFING:
-                // Strafe right for RED, strafe left for BLUE
-                double strafeDistance = (alliance == Alliance.RED) ? 23 : -23;
-
-                if(strafe(STRAFE_SPEED, strafeDistance, DistanceUnit.INCH, 1)){
-                    autonomousState = AutonomousState.COMPLETE;
+            case SHOOT_TRIP_3:
+                if (shootN(3)) {
+                    autoState = AutoState.NEXT_PILE;
                 }
                 break;
 
-            /*
-             * NO LAUNCH mode - just drives straight forward 20 inches
-             */
-            case NO_LAUNCH_STRAIGHT:
-                if(drive(DRIVE_SPEED, 35, DistanceUnit.INCH, 1)){
-                    autonomousState = AutonomousState.COMPLETE;
+            case NEXT_PILE:
+                pileIndex++;
+                if (pileIndex >= 3) {
+                    autoState = AutoState.COMPLETE;
+                    stopAll();
+                } else {
+                    autoState = AutoState.GO_TO_PILE;
+                    holdTimer.reset();
                 }
+                break;
+
+            case COMPLETE:
+                stopAll();
                 break;
         }
 
-        /*
-         * Telemetry updated for mecanum wheels
-         */
-        telemetry.addData("AutoMode", autoMode);
-        telemetry.addData("Alliance", alliance);
-        telemetry.addData("AutoState", autonomousState);
-        telemetry.addData("LauncherState", launchState);
-        telemetry.addData("FL Position", frontLeftDrive.getCurrentPosition());
-        telemetry.addData("FR Position", frontRightDrive.getCurrentPosition());
-        telemetry.addData("BL Position", backLeftDrive.getCurrentPosition());
-        telemetry.addData("BR Position", backRightDrive.getCurrentPosition());
+        telemetry.addData("State", autoState);
+        telemetry.addData("PileIndex", pileIndex);
+        telemetry.addData("OTOS", "x=%.1f y=%.1f h=%.1f", p.x, p.y, p.h);
+        telemetry.addData("LauncherVel", "%.0f", launcher.getVelocity());
         telemetry.update();
     }
 
-    /*
-     * This code runs ONCE after the driver hits STOP.
-     */
-    @Override
-    public void stop() {
+    // ===================== OTOS init =====================
+    private void initOTOS() {
+        otos.setLinearUnit(DistanceUnit.INCH);
+        otos.setAngularUnit(AngleUnit.DEGREES);
+        otos.setOffset(new SparkFunOTOS.Pose2D(0, 0, 0)); // change if your OTOS isn't at robot center
+        otos.setLinearScalar(1.0);
+        otos.setAngularScalar(1.0);
+        // Keep robot still while calibrating
+        otos.calibrateImu();
+        otos.resetTracking();
     }
 
-    /**
-     * Launches one ball, when a shot is requested spins up the motor and once it is above a minimum
-     * velocity, runs the feeder servos for the right amount of time to feed the next ball.
-     * @param shotRequested "true" if the user would like to fire a new shot, and "false" if a shot
-     *                      has already been requested and we need to continue to move through the
-     *                      state machine and launch the ball.
-     * @return "true" for one cycle after a ball has been successfully launched, "false" otherwise.
-     */
-    boolean launch(boolean shotRequested){
+    // ===================== Placeholder intake =====================
+    private void intakeStart() {
+        // TODO: implement hardware here
+    }
+
+    private void intakeStop() {
+        // TODO: implement intake hardware here
+    }
+
+    // ===================== Navigation (OTOS closed-loop) =====================
+    private boolean goToPose(double tx, double ty, double thDeg) {
+        SparkFunOTOS.Pose2D p = otos.getPosition();
+
+        double ex = tx - p.x;
+        double ey = ty - p.y;
+
+        double dist = Math.hypot(ex, ey);
+        double eh = angleWrapDeg(thDeg - p.h);
+
+        boolean posOk = dist <= POS_TOL_IN;
+        boolean headOk = Math.abs(eh) <= HEAD_TOL_DEG;
+
+        if (!(posOk && headOk)) holdTimer.reset();
+        if (posOk && headOk && holdTimer.seconds() >= HOLD_SEC) return true;
+
+        // Convert field error into robot-centric commands using current heading
+        double headingRad = Math.toRadians(p.h);
+        double cos = Math.cos(-headingRad);
+        double sin = Math.sin(-headingRad);
+
+        // robotX = strafe error, robotY = forward error
+        double robotX = ex * cos - ey * sin;
+        double robotY = ex * sin + ey * cos;
+
+        double forward = clip(robotY * kP_XY, -MAX_TRANSLATE, MAX_TRANSLATE);
+        double strafe  = clip(robotX * kP_XY, -MAX_TRANSLATE, MAX_TRANSLATE);
+        double turn    = clip(eh * kP_H,      -MAX_ROTATE,    MAX_ROTATE);
+
+        driveRobotCentric(forward, strafe, turn);
+        return false;
+    }
+
+    private void driveRobotCentric(double forward, double strafe, double rotate) {
+        double fl = forward + strafe + rotate;
+        double fr = forward - strafe - rotate;
+        double bl = forward - strafe + rotate;
+        double br = forward + strafe - rotate;
+
+        double max = Math.max(Math.abs(fl),
+                Math.max(Math.abs(fr), Math.max(Math.abs(bl), Math.abs(br))));
+        if (max > 1.0) { fl/=max; fr/=max; bl/=max; br/=max; }
+
+        frontLeftDrive.setPower(fl);
+        frontRightDrive.setPower(fr);
+        backLeftDrive.setPower(bl);
+        backRightDrive.setPower(br);
+    }
+
+    private void stopDrive() {
+        frontLeftDrive.setPower(0);
+        frontRightDrive.setPower(0);
+        backLeftDrive.setPower(0);
+        backRightDrive.setPower(0);
+    }
+
+    private void stopAll() {
+        stopDrive();
+        launcher.setVelocity(0);
+        leftFeeder.setPower(0);
+        rightFeeder.setPower(0);
+        intakeStop();
+    }
+
+    // Shooter (launch state machine)
+    private boolean shootN(int n) {
+        // Ensure we are shooting exactly n shots for this phase
+        if (shotsRemaining > n) shotsRemaining = n;
+        if (shotsRemaining <= 0) return true;
+
+        // Request shot when idle, otherwise keep advancing
+        boolean request = (launchState == LaunchState.IDLE);
+        if (launch(request)) {
+            shotsRemaining--;
+        }
+        return shotsRemaining <= 0;
+    }
+
+    private boolean launch(boolean shotRequested){
         switch (launchState) {
             case IDLE:
                 if (shotRequested) {
@@ -324,6 +340,7 @@ public class Auto extends OpMode
                     shotTimer.reset();
                 }
                 break;
+
             case PREPARE:
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
                 if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY){
@@ -333,143 +350,44 @@ public class Auto extends OpMode
                     feederTimer.reset();
                 }
                 break;
+
             case LAUNCH:
                 if (feederTimer.seconds() > FEED_TIME) {
                     leftFeeder.setPower(0);
                     rightFeeder.setPower(0);
 
-                    if(shotTimer.seconds() > TIME_BETWEEN_SHOTS){
+                    if (shotTimer.seconds() > TIME_BETWEEN_SHOTS){
                         launchState = LaunchState.IDLE;
-                        return true;
+                        return true; // one shot complete
                     }
                 }
+                break;
         }
         return false;
     }
 
-    /**
-     * Drives the robot forward/backward using all four mecanum wheels.
-     * @param speed From 0-1
-     * @param distance In specified unit
-     * @param distanceUnit the unit of measurement for distance
-     * @param holdSeconds the number of seconds to wait at position before returning true.
-     * @return "true" if the motors are within tolerance of the target position for more than
-     * holdSeconds. "false" otherwise.
-     */
-    boolean drive(double speed, double distance, DistanceUnit distanceUnit, double holdSeconds) {
-        final double TOLERANCE_MM = 10;
+    // Pile targets helper
+    private double[] getPileTarget(int idx) {
+        // If you want red/blue mirrored, flip X here:
+        double x = PILES_COMMON[idx][0];
+        double y = PILES_COMMON[idx][1];
+        double h = PILES_COMMON[idx][2];
 
-        double targetPosition = (distanceUnit.toMm(distance) * TICKS_PER_MM);
+        // Example mirror: red piles on left, blue piles on right
+        // If your common list assumes "to the right", invert for red, etc.
+        if (alliance == Alliance.RED) x = -x;
 
-        // Set same target for all wheels for straight driving
-        frontLeftDrive.setTargetPosition((int) targetPosition);
-        frontRightDrive.setTargetPosition((int) targetPosition);
-        backLeftDrive.setTargetPosition((int) targetPosition);
-        backRightDrive.setTargetPosition((int) targetPosition);
-
-        frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-
-        frontLeftDrive.setPower(speed);
-        frontRightDrive.setPower(speed);
-        backLeftDrive.setPower(speed);
-        backRightDrive.setPower(speed);
-
-        // Check if front left wheel is within tolerance
-        if(Math.abs(targetPosition - frontLeftDrive.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
-            driveTimer.reset();
-        }
-
-        return (driveTimer.seconds() > holdSeconds);
+        return new double[]{x, y, h};
     }
 
-    /**
-     * Strafes the robot left/right using mecanum wheels.
-     * @param speed From 0-1
-     * @param distance In specified unit (positive = right, negative = left)
-     * @param distanceUnit the unit of measurement for distance
-     * @param holdSeconds the number of seconds to wait at position before returning true.
-     * @return "true" if the motors are within tolerance of the target position for more than
-     * holdSeconds. "false" otherwise.
-     */
-    boolean strafe(double speed, double distance, DistanceUnit distanceUnit, double holdSeconds) {
-        final double TOLERANCE_MM = 10;
-
-        double targetPosition = (distanceUnit.toMm(distance) * TICKS_PER_MM);
-
-        // For strafing right: FL and BR go forward, FR and BL go backward
-        // For strafing left: FL and BR go backward, FR and BL go forward
-        frontLeftDrive.setTargetPosition((int) targetPosition);
-        frontRightDrive.setTargetPosition((int) -targetPosition);
-        backLeftDrive.setTargetPosition((int) -targetPosition);
-        backRightDrive.setTargetPosition((int) targetPosition);
-
-        frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-
-        frontLeftDrive.setPower(speed);
-        frontRightDrive.setPower(speed);
-        backLeftDrive.setPower(speed);
-        backRightDrive.setPower(speed);
-
-        // Check if front left wheel is within tolerance
-        if(Math.abs(targetPosition - frontLeftDrive.getCurrentPosition()) > (TOLERANCE_MM * TICKS_PER_MM)){
-            driveTimer.reset();
-        }
-
-        return (driveTimer.seconds() > holdSeconds);
+    // Utils
+    private double clip(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
     }
 
-    /**
-     * Rotates the robot in place.
-     * @param speed From 0-1
-     * @param degrees Degrees to rotate (positive = clockwise, negative = counter-clockwise)
-     * @param holdSeconds the number of seconds to wait at position before returning true.
-     * @return "true" if the motors are within tolerance of the target position for more than
-     * holdSeconds. "false" otherwise.
-     */
-    boolean rotate(double speed, double degrees, double holdSeconds) {
-        final double TOLERANCE_MM = 10;
-
-        // Calculate arc length for rotation: arc = (degrees/360) * pi * robotWidth
-        double arcLengthMm = (Math.abs(degrees) / 360.0) * Math.PI * ROBOT_WIDTH_MM;
-        double targetTicks = arcLengthMm * TICKS_PER_MM;
-
-        // For clockwise rotation (positive degrees): left side forward, right side backward
-        // For counter-clockwise rotation (negative degrees): left side backward, right side forward
-        if (degrees > 0) {
-            // Clockwise
-            frontLeftDrive.setTargetPosition((int) targetTicks);
-            frontRightDrive.setTargetPosition((int) -targetTicks);
-            backLeftDrive.setTargetPosition((int) targetTicks);
-            backRightDrive.setTargetPosition((int) -targetTicks);
-        } else {
-            // Counter-clockwise
-            frontLeftDrive.setTargetPosition((int) -targetTicks);
-            frontRightDrive.setTargetPosition((int) targetTicks);
-            backLeftDrive.setTargetPosition((int) -targetTicks);
-            backRightDrive.setTargetPosition((int) targetTicks);
-        }
-
-        frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-
-        frontLeftDrive.setPower(speed);
-        frontRightDrive.setPower(speed);
-        backLeftDrive.setPower(speed);
-        backRightDrive.setPower(speed);
-
-        // Check if front left wheel is within tolerance
-        if(Math.abs(Math.abs(frontLeftDrive.getTargetPosition()) - Math.abs(frontLeftDrive.getCurrentPosition())) > (TOLERANCE_MM * TICKS_PER_MM)){
-            driveTimer.reset();
-        }
-
-        return (driveTimer.seconds() > holdSeconds);
+    private double angleWrapDeg(double deg) {
+        while (deg > 180) deg -= 360;
+        while (deg < -180) deg += 360;
+        return deg;
     }
 }

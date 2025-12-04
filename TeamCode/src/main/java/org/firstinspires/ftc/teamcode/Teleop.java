@@ -30,10 +30,12 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  *
  * GAMEPAD 2 (Operator):
  * - Right trigger: Hold to run launcher motor (releases when let go)
- * - X button: Run feeders (only works if launcher has been running for 1.5+ seconds)
+ * - Left trigger: Hold to run intake motor forward AND feeders in reverse (releases when let go)
+ * - Left bumper: Hold to run intake motor in reverse (outtake) (releases when let go)
+ * - X button: Run feeders forward (only works if launcher has been running for 1.5+ seconds)
  */
 
-@TeleOp(name = "StarterBotTeleop", group = "StarterBot")
+@TeleOp(name = "Teleop", group = "StarterBot")
 //@Disabled
 public class Teleop extends OpMode {
     final double FEED_TIME_SECONDS = 0.40; // Time feeders run to launch one artifact
@@ -56,6 +58,7 @@ public class Teleop extends OpMode {
     private DcMotor backLeftDrive = null;
     private DcMotor backRightDrive = null;
     private DcMotorEx launcher = null;
+    private DcMotor intake = null;
     private CRServo leftFeeder = null;
     private CRServo rightFeeder = null;
 
@@ -94,6 +97,7 @@ public class Teleop extends OpMode {
         backLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_back");
         backRightDrive = hardwareMap.get(DcMotor.class, "right_drive_back");
         launcher = hardwareMap.get(DcMotorEx.class, "launch_motor");
+        intake = hardwareMap.get(DcMotor.class, "intake");
         leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
         rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
 
@@ -135,6 +139,7 @@ public class Teleop extends OpMode {
         backLeftDrive.setZeroPowerBehavior(BRAKE);
         backRightDrive.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
+        intake.setZeroPowerBehavior(BRAKE);
 
         /*
          * set Feeders to an initial value to initialize the servo controller
@@ -201,6 +206,36 @@ public class Teleop extends OpMode {
             launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         }
 
+        /*
+         * GAMEPAD 2: Left trigger - Hold to run intake motor forward AND feeders in reverse
+         */
+        boolean intakeActive = gamepad2.left_trigger > 0.1;
+        boolean outtakeActive = gamepad2.left_bumper;
+
+        if (intakeActive) {
+            intake.setPower(FULL_SPEED);
+            // Run feeders in REVERSE during intake (opposite of launch direction)
+            if (!feedersRunning && !inCooldown) {
+                leftFeeder.setPower(-FULL_SPEED);
+                rightFeeder.setPower(-FULL_SPEED);
+            }
+        } else if (outtakeActive) {
+            /*
+             * GAMEPAD 2: Left bumper - Hold to run intake motor in reverse (outtake)
+             */
+            intake.setPower(-FULL_SPEED);
+            if (!feedersRunning && !inCooldown) {
+                leftFeeder.setPower(STOP_SPEED);
+                rightFeeder.setPower(STOP_SPEED);
+            }
+        } else {
+            intake.setPower(0);
+            if (!feedersRunning && !inCooldown) {
+                leftFeeder.setPower(STOP_SPEED);
+                rightFeeder.setPower(STOP_SPEED);
+            }
+        }
+
         // Check if launcher has warmed up (been running for at least 1.5 seconds)
         boolean launcherWarmedUp = launcherRunning && (launcherTimer.seconds() >= LAUNCHER_WARMUP_TIME);
 
@@ -244,10 +279,6 @@ public class Teleop extends OpMode {
                 // Cooldown complete
                 inCooldown = false;
             }
-        } else {
-            // Not in feeding cycle or cooldown
-            leftFeeder.setPower(STOP_SPEED);
-            rightFeeder.setPower(STOP_SPEED);
         }
 
         // Telemetry for debugging
@@ -288,6 +319,17 @@ public class Teleop extends OpMode {
 
         telemetry.addData("Feeder Power", "L: %.1f  R: %.1f",
                 leftFeeder.getPower(), rightFeeder.getPower());
+
+        String intakeStatus;
+        if (gamepad2.left_trigger > 0.1) {
+            intakeStatus = "INTAKE";
+        } else if (gamepad2.left_bumper) {
+            intakeStatus = "OUTTAKE";
+        } else {
+            intakeStatus = "STOPPED";
+        }
+        telemetry.addData("Intake Status", intakeStatus);
+        telemetry.addData("Intake Power", "%.1f", intake.getPower());
         telemetry.update();
     }
 

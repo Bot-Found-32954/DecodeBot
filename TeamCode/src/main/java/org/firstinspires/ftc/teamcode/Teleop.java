@@ -262,6 +262,7 @@ public class Teleop extends OpMode {
                 // Still feeding
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);
+                intake.setPower(-FULL_SPEED);
             } else {
                 // Feeding time complete, stop feeders and start cooldown
                 feedersRunning = false;
@@ -269,11 +270,13 @@ public class Teleop extends OpMode {
                 feederTimer.reset();
                 leftFeeder.setPower(STOP_SPEED);
                 rightFeeder.setPower(STOP_SPEED);
+                intake.setPower(0);
             }
         } else if (inCooldown) {
             // In cooldown period
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
+            intake.setPower(0);
 
             if (feederTimer.seconds() >= COOLDOWN_TIME_SECONDS) {
                 // Cooldown complete

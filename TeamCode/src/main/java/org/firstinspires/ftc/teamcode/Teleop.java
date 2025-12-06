@@ -6,6 +6,7 @@ import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.CRServo;
+import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
@@ -81,6 +82,8 @@ public class Teleop extends OpMode {
     double backLeftPower;
     double backRightPower;
 
+    private Servo rotationServo;
+
     /*
      * Code to run ONCE when the driver hits INIT
      */
@@ -100,6 +103,8 @@ public class Teleop extends OpMode {
         intake = hardwareMap.get(DcMotor.class, "intake");
         leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
         rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
+        rotationServo = hardwareMap.get(Servo.class, "block_servo");
+
 
         /*
          * Initialize the IMU with standard parameters for field-centric drive
@@ -262,7 +267,7 @@ public class Teleop extends OpMode {
                 // Still feeding
                 leftFeeder.setPower(FULL_SPEED);
                 rightFeeder.setPower(FULL_SPEED);
-                intake.setPower(-FULL_SPEED);
+                intake.setPower(FULL_SPEED);
             } else {
                 // Feeding time complete, stop feeders and start cooldown
                 feedersRunning = false;

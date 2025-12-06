@@ -28,6 +28,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  * - Left stick X: Strafe left/right (field-centric)
  * - Right stick X: Turn left/right
  * - Options button: Reset heading (make current direction "forward")
+ * - A button (INIT only): Set servo starting position to OPEN
+ * - B button (INIT only): Set servo starting position to CLOSED
  *
  * GAMEPAD 2 (Operator):
  * - Right trigger: Hold to run launcher motor (releases when let go)
@@ -83,6 +85,14 @@ public class Teleop extends OpMode {
     double backRightPower;
 
     private Servo rotationServo;
+
+    // Servo positions (adjust these values based on your servo's actual positions)
+    private double SERVO_OPEN_POSITION = 0.0;    // Fully open position
+    private double SERVO_CLOSED_POSITION = 1.0;  // Fully closed position
+
+    // Init state tracking
+    private boolean initServoOpen = true;  // Default to open
+    private boolean initChoiceMade = false;
 
     /*
      * Code to run ONCE when the driver hits INIT
@@ -161,16 +171,61 @@ public class Teleop extends OpMode {
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
         /*
+         * Set servo to a neutral position during init
+         * The actual starting position will be set in init_loop based on user choice
+         */
+        rotationServo.setPosition(0.5);
+
+        /*
          * Tell the driver that initialization is complete.
          */
         telemetry.addData("Status", "Initialized - Mecanum Drive");
+        telemetry.addData("", "");
+        telemetry.addData("CHOOSE SERVO START POSITION:", "");
+        telemetry.addData("Gamepad 1 A", "Open");
+        telemetry.addData("Gamepad 1 B", "Closed");
+        telemetry.update();
     }
 
     /*
      * Code to run REPEATEDLY after the driver hits INIT, but before they hit START
      */
     @Override
-    public void init_loop() { }
+    public void init_loop() {
+        // Allow driver to choose servo starting position
+        if (!initChoiceMade) {
+            if (gamepad1.a) {
+                initServoOpen = true;
+                initChoiceMade = true;
+                rotationServo.setPosition(SERVO_OPEN_POSITION);
+                telemetry.addData("Servo Start Position", "OPEN");
+                telemetry.addData("Status", "Ready to Start!");
+                telemetry.update();
+            } else if (gamepad1.b) {
+                initServoOpen = false;
+                initChoiceMade = true;
+                rotationServo.setPosition(SERVO_CLOSED_POSITION);
+                telemetry.addData("Servo Start Position", "CLOSED");
+                telemetry.addData("Status", "Ready to Start!");
+                telemetry.update();
+            } else {
+                // Show selection menu
+                telemetry.addData("Status", "Waiting for servo position choice...");
+                telemetry.addData("", "");
+                telemetry.addData("CHOOSE SERVO START POSITION:", "");
+                telemetry.addData("Gamepad 1 A", "Open");
+                telemetry.addData("Gamepad 1 B", "Closed");
+                telemetry.addData("", "");
+                telemetry.addData("Current Choice", initServoOpen ? "Open (default)" : "Closed");
+                telemetry.update();
+            }
+        } else {
+            // Choice has been made, show confirmation
+            telemetry.addData("Servo Start Position", initServoOpen ? "OPEN" : "CLOSED");
+            telemetry.addData("Status", "✓ Ready to Start!");
+            telemetry.update();
+        }
+    }
 
     /*
      * Code to run ONCE when the driver hits START

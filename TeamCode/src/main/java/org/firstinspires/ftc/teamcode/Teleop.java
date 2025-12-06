@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode;
 
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
+import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -28,25 +29,29 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  * - Left stick X: Strafe left/right (field-centric)
  * - Right stick X: Turn left/right
  * - Options button: Reset heading (make current direction "forward")
- * - A button (INIT only): Set servo starting position to OPEN
- * - B button (INIT only): Set servo starting position to CLOSED
  *
  * GAMEPAD 2 (Operator):
  * - Right trigger: Hold to run launcher motor (releases when let go)
- * - Left trigger: Hold to run intake motor forward AND feeders in reverse (releases when let go)
+ * - Left trigger: Hold to run intake motor forward AND feeders in reverse
  * - Left bumper: Hold to run intake motor in reverse (outtake) (releases when let go)
- * - X button: Run feeders forward (only works if launcher has been running for 1.5+ seconds)
+ * - X button: HOLD to run feeders forward (only works if launcher has been running for 1.5+ seconds)
+ * - A button: Press ONCE during init to confirm (servo stays OPEN until confirmed)
+ *
+ * SERVO BEHAVIOR (AUTOMATIC - NO OVERRIDES):
+ * - During INIT: Stays OPEN, press A button once to confirm
+ * - Servo moves to CLOSED position when intake is active
+ * - Servo moves to OPEN position when launcher/feeders are active
+ * - NO manual control during operation
  */
 
 @TeleOp(name = "Teleop", group = "StarterBot")
+@Config
 //@Disabled
 public class Teleop extends OpMode {
-    final double FEED_TIME_SECONDS = 0.40; // Time feeders run to launch one artifact
-    final double COOLDOWN_TIME_SECONDS = 0.5; // Cooldown time between launches
-    final double LAUNCHER_WARMUP_TIME = 1.5; // Time for launcher to reach full speed before feeding
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
     final double DRIVE_SPEED_MULTIPLIER = 2; // Speed multiplier for mecanum drive (overclock)
+    final double LAUNCHER_WARMUP_TIME = 1.5; // Time for launcher to reach full speed before feeding
 
     /*
      * When we control our launcher motor, we are using encoders. These allow the control system
@@ -72,12 +77,6 @@ public class Teleop extends OpMode {
     private boolean launcherRunning = false;
     private ElapsedTime launcherTimer = new ElapsedTime();
 
-    // Track feeder state
-    private boolean feedersRunning = false;
-    private boolean inCooldown = false;
-    private ElapsedTime feederTimer = new ElapsedTime();
-    private boolean xButtonPreviouslyPressed = false;
-
     // Setup variables for drive wheel power levels for telemetry
     double frontLeftPower;
     double frontRightPower;
@@ -87,12 +86,13 @@ public class Teleop extends OpMode {
     private Servo rotationServo;
 
     // Servo positions (adjust these values based on your servo's actual positions)
-    private double SERVO_OPEN_POSITION = 0.0;    // Fully open position
-    private double SERVO_CLOSED_POSITION = 1.0;  // Fully closed position
+    private static double SERVO_OPEN_POSITION = 0.1567;    // Fully open position (for launcher)
+    private static double SERVO_CLOSED_POSITION = 0.4367;  // Fully closed position (for intake)
 
-    // Init state tracking
-    private boolean initServoOpen = true;  // Default to open
-    private boolean initChoiceMade = false;
+    // Servo toggle state
+    private boolean servoIsOpen = true;  // Start in OPEN position
+    private boolean aButtonPreviouslyPressed = false;
+    private boolean initConfirmed = false;  // Track if init confirmation is complete
 
     /*
      * Code to run ONCE when the driver hits INIT
@@ -171,19 +171,17 @@ public class Teleop extends OpMode {
         leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
 
         /*
-         * Set servo to a neutral position during init
-         * The actual starting position will be set in init_loop based on user choice
+         * Set servo to OPEN position at startup
          */
-        rotationServo.setPosition(0.5);
+        rotationServo.setPosition(SERVO_OPEN_POSITION);
+        servoIsOpen = true;
 
         /*
          * Tell the driver that initialization is complete.
          */
         telemetry.addData("Status", "Initialized - Mecanum Drive");
-        telemetry.addData("", "");
-        telemetry.addData("CHOOSE SERVO START POSITION:", "");
-        telemetry.addData("Gamepad 1 A", "Open");
-        telemetry.addData("Gamepad 1 B", "Closed");
+        telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
+        telemetry.addData("", "Press START to begin");
         telemetry.update();
     }
 
@@ -192,46 +190,33 @@ public class Teleop extends OpMode {
      */
     @Override
     public void init_loop() {
-        // Allow driver to choose servo starting position
-        if (!initChoiceMade) {
-            if (gamepad1.a) {
-                initServoOpen = true;
-                initChoiceMade = true;
-                rotationServo.setPosition(SERVO_OPEN_POSITION);
-                telemetry.addData("Servo Start Position", "OPEN");
-                telemetry.addData("Status", "Ready to Start!");
-                telemetry.update();
-            } else if (gamepad1.b) {
-                initServoOpen = false;
-                initChoiceMade = true;
-                rotationServo.setPosition(SERVO_CLOSED_POSITION);
-                telemetry.addData("Servo Start Position", "CLOSED");
-                telemetry.addData("Status", "Ready to Start!");
-                telemetry.update();
-            } else {
-                // Show selection menu
-                telemetry.addData("Status", "Waiting for servo position choice...");
-                telemetry.addData("", "");
-                telemetry.addData("CHOOSE SERVO START POSITION:", "");
-                telemetry.addData("Gamepad 1 A", "Open");
-                telemetry.addData("Gamepad 1 B", "Closed");
-                telemetry.addData("", "");
-                telemetry.addData("Current Choice", initServoOpen ? "Open (default)" : "Closed");
-                telemetry.update();
-            }
-        } else {
-            // Choice has been made, show confirmation
-            telemetry.addData("Servo Start Position", initServoOpen ? "OPEN" : "CLOSED");
-            telemetry.addData("Status", "✓ Ready to Start!");
-            telemetry.update();
+        // Check for A button press to confirm init
+        if (gamepad2.a && !aButtonPreviouslyPressed && !initConfirmed) {
+            initConfirmed = true;
         }
+        aButtonPreviouslyPressed = gamepad2.a;
+
+        if (!initConfirmed) {
+            telemetry.addData("Status", "WAITING FOR CONFIRMATION");
+            telemetry.addData("", ">>> PRESS GAMEPAD 2 'A' TO CONFIRM <<<");
+            telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
+        } else {
+            telemetry.addData("Status", "Ready to Start!");
+            telemetry.addData("", "✓ CONFIRMED - Press START to begin");
+            telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
+        }
+        telemetry.addData("", "Servo auto-positions during operation");
+        telemetry.update();
     }
 
     /*
      * Code to run ONCE when the driver hits START
      */
     @Override
-    public void start() { }
+    public void start() {
+        // Reset button state for loop
+        aButtonPreviouslyPressed = false;
+    }
 
     /*
      * Code to run REPEATEDLY after the driver hits START but before they hit STOP
@@ -257,6 +242,7 @@ public class Teleop extends OpMode {
             }
             launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
         } else {
             // Trigger released, stop launcher
             if (launcherRunning) {
@@ -275,72 +261,59 @@ public class Teleop extends OpMode {
         if (intakeActive) {
             intake.setPower(FULL_SPEED);
             // Run feeders in REVERSE during intake (opposite of launch direction)
-            if (!feedersRunning && !inCooldown) {
-                leftFeeder.setPower(-FULL_SPEED);
-                rightFeeder.setPower(-FULL_SPEED);
-            }
+            leftFeeder.setPower(-FULL_SPEED);
+            rightFeeder.setPower(-FULL_SPEED);
+
         } else if (outtakeActive) {
             /*
              * GAMEPAD 2: Left bumper - Hold to run intake motor in reverse (outtake)
              */
             intake.setPower(-FULL_SPEED);
-            if (!feedersRunning && !inCooldown) {
-                leftFeeder.setPower(STOP_SPEED);
-                rightFeeder.setPower(STOP_SPEED);
-            }
+            leftFeeder.setPower(STOP_SPEED);
+            rightFeeder.setPower(STOP_SPEED);
         } else {
             intake.setPower(0);
-            if (!feedersRunning && !inCooldown) {
-                leftFeeder.setPower(STOP_SPEED);
-                rightFeeder.setPower(STOP_SPEED);
-            }
+            // Don't automatically stop feeders here - let X button control them
         }
 
         // Check if launcher has warmed up (been running for at least 1.5 seconds)
         boolean launcherWarmedUp = launcherRunning && (launcherTimer.seconds() >= LAUNCHER_WARMUP_TIME);
 
         /*
-         * GAMEPAD 2: X button - Run feeders for a timed duration
+         * GAMEPAD 2: X button - HOLD to run feeders forward
          * Only works if launcher has been warmed up for 1.5+ seconds
-         * Detects button press (not hold) to start feeding cycle
-         * Includes cooldown between launches
+         * Feeders run continuously while X is held down
+         * Also runs intake motor while feeding
          */
-        boolean xButtonCurrentlyPressed = gamepad2.x;
-
-        // Detect X button press (transition from not pressed to pressed)
-        if (xButtonCurrentlyPressed && !xButtonPreviouslyPressed && launcherWarmedUp && !feedersRunning && !inCooldown) {
-            // Start feeding cycle
-            feedersRunning = true;
-            feederTimer.reset();
-        }
-
-        xButtonPreviouslyPressed = xButtonCurrentlyPressed;
-
-        // Control feeders based on timer
-        if (feedersRunning) {
-            if (feederTimer.seconds() < FEED_TIME_SECONDS) {
-                // Still feeding
-                leftFeeder.setPower(FULL_SPEED);
-                rightFeeder.setPower(FULL_SPEED);
-                intake.setPower(FULL_SPEED);
-            } else {
-                // Feeding time complete, stop feeders and start cooldown
-                feedersRunning = false;
-                inCooldown = true;
-                feederTimer.reset();
-                leftFeeder.setPower(STOP_SPEED);
-                rightFeeder.setPower(STOP_SPEED);
-                intake.setPower(0);
-            }
-        } else if (inCooldown) {
-            // In cooldown period
+        boolean feedersActive = false;
+        if (gamepad2.x && launcherWarmedUp) {
+            // X button is being held and launcher is ready
+            leftFeeder.setPower(FULL_SPEED);
+            rightFeeder.setPower(FULL_SPEED);
+            intake.setPower(FULL_SPEED);
+            feedersActive = true;
+        } else if (!intakeActive && !outtakeActive) {
+            // X button not pressed and intake not active - stop feeders
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
-            intake.setPower(0);
+        }
 
-            if (feederTimer.seconds() >= COOLDOWN_TIME_SECONDS) {
-                // Cooldown complete
-                inCooldown = false;
+        /*
+         * AUTOMATIC SERVO POSITIONING
+         * - CLOSED when intake is active
+         * - OPEN when launcher/feeders are active
+         */
+        if (intakeActive || outtakeActive) {
+            // Intake is running - move to CLOSED position
+            if (servoIsOpen) {
+                rotationServo.setPosition(SERVO_CLOSED_POSITION);
+                servoIsOpen = false;
+            }
+        } else if (launcherRunning || feedersActive) {
+            // Launcher or feeders are running - move to OPEN position
+            if (!servoIsOpen) {
+                rotationServo.setPosition(SERVO_OPEN_POSITION);
+                servoIsOpen = true;
             }
         }
 
@@ -349,6 +322,13 @@ public class Teleop extends OpMode {
         telemetry.addData("Heading", "%.2f degrees", Math.toDegrees(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS)));
         telemetry.addData("Drive", "FL:%.2f FR:%.2f BL:%.2f BR:%.2f",
                 frontLeftPower, frontRightPower, backLeftPower, backRightPower);
+
+        // Servo position telemetry
+        double currentServoPos = rotationServo.getPosition();
+        String servoState = servoIsOpen ? "OPEN (Launcher)" : "CLOSED (Intake)";
+        telemetry.addData("Rotation Servo", "%s (%.2f)", servoState, currentServoPos);
+        telemetry.addData("", "Auto-controlled");
+
         telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
 
         if (launcherRunning) {
@@ -363,22 +343,16 @@ public class Teleop extends OpMode {
         telemetry.addData("Launcher Velocity", launcher.getVelocity());
 
         String feederStatus;
-        if (feedersRunning) {
-            feederStatus = "FEEDING";
-        } else if (inCooldown) {
-            feederStatus = "COOLDOWN";
+        if (feedersActive) {
+            feederStatus = "FEEDING (Hold X)";
         } else if (launcherRunning && launcherTimer.seconds() < LAUNCHER_WARMUP_TIME) {
             feederStatus = "WARMING UP";
         } else if (launcherRunning) {
-            feederStatus = "READY";
+            feederStatus = "READY (Press X)";
         } else {
             feederStatus = "LAUNCHER OFF";
         }
         telemetry.addData("Feeders Status", feederStatus);
-
-        if (feedersRunning || inCooldown) {
-            telemetry.addData("Timer", "%.2f sec", feederTimer.seconds());
-        }
 
         telemetry.addData("Feeder Power", "L: %.1f  R: %.1f",
                 leftFeeder.getPower(), rightFeeder.getPower());
@@ -388,6 +362,8 @@ public class Teleop extends OpMode {
             intakeStatus = "INTAKE";
         } else if (gamepad2.left_bumper) {
             intakeStatus = "OUTTAKE";
+        } else if (feedersActive) {
+            intakeStatus = "FEEDING";
         } else {
             intakeStatus = "STOPPED";
         }

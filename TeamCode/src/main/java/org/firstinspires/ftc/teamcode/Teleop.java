@@ -51,14 +51,14 @@ public class Teleop extends OpMode {
     final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
     final double FULL_SPEED = 1.0;
     final double DRIVE_SPEED_MULTIPLIER = 2; // Speed multiplier for mecanum drive (overclock)
-    final double LAUNCHER_WARMUP_TIME = 1.5; // Time for launcher to reach full speed before feeding
+    final double LAUNCHER_WARMUP_TIME = 0.67; // Time for launcher to reach full speed before feeding
 
     /*
      * When we control our launcher motor, we are using encoders. These allow the control system
      * to read the current speed of the motor and apply more or less power to keep it at a constant
      * velocity. Here we are setting the target velocity that the launcher should run at.
      */
-    final double LAUNCHER_TARGET_VELOCITY = 1250;
+    final double LAUNCHER_TARGET_VELOCITY = 1300;
 
     // Declare OpMode members for mecanum drive
     private DcMotor frontLeftDrive = null;
@@ -296,6 +296,7 @@ public class Teleop extends OpMode {
             // X button not pressed and intake not active - stop feeders
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
+
         }
 
         /*

@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import com.qualcomm.robotcore.hardware.CRServo;
+import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
@@ -17,42 +18,56 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 //@Disabled
 public class AutoSimple extends OpMode {
 
-    // ===== Shooter constants =====
+    // ===== Shooter constants (matching teleop) =====
+    final double LAUNCHER_WARMUP_TIME = 0.67;  // Match teleop warmup time
+    final double SERVO_MOVE_TIME = 1.7;  // Time to wait for servo to move to position
     final double FEED_TIME = 0.40;
     final double LAUNCHER_TARGET_VELOCITY = 1295;
     final double LAUNCHER_MIN_VELOCITY = 1175;
-    final double TIME_BETWEEN_SHOTS = 2.0;
+    final double DELAY_BETWEEN_SHOTS = 3;  // Delay after each shot before next shot starts
+
+    // ===== Servo positions (matching teleop) =====
+    final double SERVO_OPEN_POSITION = 0.1567;    // Open for launcher
+    final double SERVO_CLOSED_POSITION = 0.4367;  // Closed for intake
 
     // ===== Movement constants (tune these) =====
-    final double DRIVE_FORWARD_TIME = 2.0;  // seconds to drive straight
+    final double INITIAL_BACKUP_TIME = 0.3;    // Time to back up at start
+    final double INITIAL_BACKUP_POWER = -0.4;  // Negative = backward
+    final double DRIVE_FORWARD_TIME = 1.0;     // seconds to drive straight
     final double DRIVE_FORWARD_POWER = 0.5;
-    final double STRAFE_TIME = 0.5;         // seconds to strafe
+    final double STRAFE_TIME = 0.5;            // seconds to strafe
     final double STRAFE_POWER = 0.4;
-    final double ROTATE_TIME = 0.5;         // seconds to rotate
+    final double ROTATE_TIME = 0.5;            // seconds to rotate
     final double ROTATE_POWER = 0.3;
 
     // ===== Hardware =====
     private DcMotor frontLeftDrive, frontRightDrive, backLeftDrive, backRightDrive;
     private DcMotorEx launcher;
+    private DcMotor intake;
     private CRServo leftFeeder, rightFeeder;
+    private Servo rotationServo;
 
     // ===== Timers =====
     private final ElapsedTime shotTimer   = new ElapsedTime();
     private final ElapsedTime feederTimer = new ElapsedTime();
+    private final ElapsedTime launcherTimer = new ElapsedTime();
+    private final ElapsedTime servoTimer = new ElapsedTime();
+    private final ElapsedTime delayTimer = new ElapsedTime();
     private final ElapsedTime moveTimer   = new ElapsedTime();
 
     // ===== Launch state machine =====
-    private enum LaunchState { IDLE, PREPARE, LAUNCH }
+    private enum LaunchState { IDLE, SERVO_MOVE, WARMUP, FEED, DELAY }
     private LaunchState launchState = LaunchState.IDLE;
 
     // ===== Auto state machine =====
     private enum AutoState {
+        INITIAL_BACKUP,
         SHOOT_3,
         STRAFE,
         ROTATE,
         COMPLETE
     }
-    private AutoState autoState = AutoState.SHOOT_3;
+    private AutoState autoState = AutoState.INITIAL_BACKUP;
 
     private int shotsRemaining = 3;
 
@@ -72,8 +87,10 @@ public class AutoSimple extends OpMode {
 
         // Shooter hardware
         launcher   = hardwareMap.get(DcMotorEx.class, "launch_motor");
+        intake     = hardwareMap.get(DcMotor.class, "intake");
         leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
         rightFeeder= hardwareMap.get(CRServo.class, "right_servo");
+        rotationServo = hardwareMap.get(Servo.class, "block_servo");
 
         // Motor directions
         frontLeftDrive.setDirection(DcMotor.Direction.REVERSE);
@@ -87,6 +104,7 @@ public class AutoSimple extends OpMode {
         backLeftDrive.setZeroPowerBehavior(BRAKE);
         backRightDrive.setZeroPowerBehavior(BRAKE);
         launcher.setZeroPowerBehavior(BRAKE);
+        intake.setZeroPowerBehavior(BRAKE);
 
         // Run drive open-loop
         frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
@@ -103,7 +121,11 @@ public class AutoSimple extends OpMode {
         leftFeeder.setPower(0);
         rightFeeder.setPower(0);
 
+        // Set servo to OPEN position for launcher (matching teleop)
+        rotationServo.setPosition(SERVO_OPEN_POSITION);
+
         telemetry.addData("Status", "Initialized");
+        telemetry.addData("Servo", "OPEN (Ready for Launch)");
     }
 
     @Override
@@ -127,9 +149,12 @@ public class AutoSimple extends OpMode {
     @Override
     public void start() {
         if (startZone == StartZone.LAUNCH) {
-            autoState = AutoState.SHOOT_3;
+            autoState = AutoState.INITIAL_BACKUP;
             shotsRemaining = 3;
             launchState = LaunchState.IDLE;
+            moveTimer.reset();
+            // Ensure servo is in OPEN position for launch
+            rotationServo.setPosition(SERVO_OPEN_POSITION);
         } else {
             autoState = AutoState.STRAFE;
             moveTimer.reset();
@@ -148,8 +173,17 @@ public class AutoSimple extends OpMode {
                 }
             }
         } else {
-            // Launch zone: shoot 3, then strafe and rotate
+            // Launch zone: back up, shoot 3, then strafe and rotate
             switch (autoState) {
+                case INITIAL_BACKUP:
+                    driveForward(INITIAL_BACKUP_POWER);  // Negative power = backward
+                    if (moveTimer.seconds() >= INITIAL_BACKUP_TIME) {
+                        stopDrive();
+                        autoState = AutoState.SHOOT_3;
+                        moveTimer.reset();
+                    }
+                    break;
+
                 case SHOOT_3:
                     if (shootN(3)) {
                         autoState = AutoState.STRAFE;
@@ -185,9 +219,12 @@ public class AutoSimple extends OpMode {
         }
 
         telemetry.addData("State", autoState);
+        telemetry.addData("Launch State", launchState);
+        telemetry.addData("Shots Remaining", shotsRemaining);
         telemetry.addData("Start Zone", startZone);
         telemetry.addData("Alliance", alliance);
         telemetry.addData("LauncherVel", "%.0f", launcher.getVelocity());
+        telemetry.addData("Servo Position", "%.3f", rotationServo.getPosition());
         telemetry.update();
     }
 
@@ -225,11 +262,12 @@ public class AutoSimple extends OpMode {
     private void stopAll() {
         stopDrive();
         launcher.setVelocity(0);
+        intake.setPower(0);
         leftFeeder.setPower(0);
         rightFeeder.setPower(0);
     }
 
-    // ===================== Shooter (launch state machine) =====================
+    // ===================== Shooter (matching teleop procedure) =====================
     private boolean shootN(int n) {
         if (shotsRemaining > n) shotsRemaining = n;
         if (shotsRemaining <= 0) return true;
@@ -245,30 +283,66 @@ public class AutoSimple extends OpMode {
         switch (launchState) {
             case IDLE:
                 if (shotRequested) {
-                    launchState = LaunchState.PREPARE;
-                    shotTimer.reset();
+                    // Move servo to OPEN position first
+                    rotationServo.setPosition(SERVO_OPEN_POSITION);
+                    launchState = LaunchState.SERVO_MOVE;
+                    servoTimer.reset();
                 }
                 break;
 
-            case PREPARE:
+            case SERVO_MOVE:
+                // Wait for servo to reach position before starting launcher
+                if (servoTimer.seconds() >= SERVO_MOVE_TIME) {
+                    launchState = LaunchState.WARMUP;
+                    shotTimer.reset();
+                    launcherTimer.reset();
+                    // Start launcher motor after servo is in position
+                    launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+                }
+                break;
+
+            case WARMUP:
+                // Keep launcher running during warmup
                 launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-                if (launcher.getVelocity() > LAUNCHER_MIN_VELOCITY){
-                    launchState = LaunchState.LAUNCH;
+
+                // Wait for warmup time AND velocity threshold (matching teleop logic)
+                if (launcherTimer.seconds() >= LAUNCHER_WARMUP_TIME &&
+                        launcher.getVelocity() > LAUNCHER_MIN_VELOCITY) {
+                    launchState = LaunchState.FEED;
+                    // Start feeding (matching teleop: feeders + intake)
                     leftFeeder.setPower(1);
                     rightFeeder.setPower(1);
+                    intake.setPower(1);  // Run intake during feeding (matching teleop)
                     feederTimer.reset();
                 }
                 break;
 
-            case LAUNCH:
+            case FEED:
+                // Keep launcher running during feed
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+                // Keep intake running during feed
+                intake.setPower(1);
+
                 if (feederTimer.seconds() > FEED_TIME) {
+                    // Stop feeders and intake
                     leftFeeder.setPower(0);
                     rightFeeder.setPower(0);
+                    intake.setPower(0);
 
-                    if (shotTimer.seconds() > TIME_BETWEEN_SHOTS){
-                        launchState = LaunchState.IDLE;
-                        return true; // one shot complete
-                    }
+                    // Move to delay state
+                    launchState = LaunchState.DELAY;
+                    delayTimer.reset();
+                }
+                break;
+
+            case DELAY:
+                // Keep launcher running during delay so it stays warm
+                launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
+
+                // Wait for delay before allowing next shot
+                if (delayTimer.seconds() >= DELAY_BETWEEN_SHOTS) {
+                    launchState = LaunchState.IDLE;
+                    return true; // one shot complete
                 }
                 break;
         }

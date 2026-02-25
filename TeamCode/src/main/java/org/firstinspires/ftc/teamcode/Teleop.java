@@ -35,6 +35,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  * - Left trigger: Hold to run intake motor forward AND feeders in reverse
  * - Left bumper: Hold to run intake motor in reverse (outtake) (releases when let go)
  * - X button: HOLD to run feeders forward (only works if launcher has been running for 1.5+ seconds)
+ * - Y button: HOLD to run feeders in reverse (intake NOT affected)
  * - A button: Press ONCE during init to confirm (servo stays OPEN until confirmed)
  *
  * SERVO BEHAVIOR (AUTOMATIC - NO OVERRIDES):
@@ -260,9 +261,7 @@ public class Teleop extends OpMode {
 
         if (intakeActive) {
             intake.setPower(FULL_SPEED);
-            // Run feeders in REVERSE during intake (opposite of launch direction)
-            leftFeeder.setPower(-FULL_SPEED);
-            rightFeeder.setPower(-FULL_SPEED);
+            // Run feeders in REVERSE during intake (opposite of launch direction
 
         } else if (outtakeActive) {
             /*
@@ -286,17 +285,26 @@ public class Teleop extends OpMode {
          * Also runs intake motor while feeding
          */
         boolean feedersActive = false;
+        boolean feedersReverse = false;
+
         if (gamepad2.x && launcherWarmedUp) {
             // X button is being held and launcher is ready
             leftFeeder.setPower(FULL_SPEED);
             rightFeeder.setPower(FULL_SPEED);
             intake.setPower(FULL_SPEED);
             feedersActive = true;
+        } else if (gamepad2.y) {
+            /*
+             * GAMEPAD 2: Y button - HOLD to run feeders in REVERSE
+             * Only affects feeders, NOT the intake motor
+             */
+            leftFeeder.setPower(-FULL_SPEED);
+            rightFeeder.setPower(-FULL_SPEED);
+            feedersReverse = true;
         } else if (!intakeActive && !outtakeActive) {
-            // X button not pressed and intake not active - stop feeders
+            // No feeder buttons pressed and intake not active - stop feeders
             leftFeeder.setPower(STOP_SPEED);
             rightFeeder.setPower(STOP_SPEED);
-
         }
 
         /*
@@ -310,7 +318,7 @@ public class Teleop extends OpMode {
                 rotationServo.setPosition(SERVO_CLOSED_POSITION);
                 servoIsOpen = false;
             }
-        } else if (launcherRunning || feedersActive) {
+        } else if (launcherRunning || feedersActive || feedersReverse) {
             // Launcher or feeders are running - move to OPEN position
             if (!servoIsOpen) {
                 rotationServo.setPosition(SERVO_OPEN_POSITION);
@@ -345,7 +353,9 @@ public class Teleop extends OpMode {
 
         String feederStatus;
         if (feedersActive) {
-            feederStatus = "FEEDING (Hold X)";
+            feederStatus = "FEEDING FORWARD (Hold X)";
+        } else if (feedersReverse) {
+            feederStatus = "FEEDING REVERSE (Hold Y)";
         } else if (launcherRunning && launcherTimer.seconds() < LAUNCHER_WARMUP_TIME) {
             feederStatus = "WARMING UP";
         } else if (launcherRunning) {

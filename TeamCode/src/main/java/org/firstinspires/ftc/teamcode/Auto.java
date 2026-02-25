@@ -16,7 +16,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 @Autonomous(name="StarterBotAuto_Simple", group="MecanumBot")
 //@Disabled
-public class AutoSimple extends OpMode {
+public class Auto extends OpMode {
 
     // ===== Shooter constants (matching teleop) =====
     final double LAUNCHER_WARMUP_TIME = 0.67;  // Match teleop warmup time

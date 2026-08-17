@@ -3,97 +3,36 @@ package org.firstinspires.ftc.teamcode;
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
 import com.acmerobotics.dashboard.config.Config;
-import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.hardware.CRServo;
-import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.IMU;
-import com.qualcomm.robotcore.hardware.PIDFCoefficients;
-import com.qualcomm.robotcore.util.ElapsedTime;
-
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 /*
- * This file includes a teleop (driver-controlled) file for the goBILDA® StarterBot for the
- * 2025-2026 FIRST® Tech Challenge season DECODE™. It leverages a mecanum drive
- * system for robot mobility (allows strafing), one high-speed motor driving two "launcher wheels",
- * and two servos which feed that launcher.
+ * Teleop (driver-controlled) OpMode for a 4-motor rear-wheel drive robot
+ * (2 motors per side, geared/paired together).
+ * Uses simple arcade drive (no strafing, no field-centric heading).
  *
- * Modified controls:
  * GAMEPAD 1 (Driver):
- * - Left stick Y: Forward/backward (field-centric)
- * - Left stick X: Strafe left/right (field-centric)
+ * - Left stick Y: Forward/backward
  * - Right stick X: Turn left/right
- * - Options button: Reset heading (make current direction "forward")
- *
- * GAMEPAD 2 (Operator):
- * - Right trigger: Hold to run launcher motor (releases when let go)
- * - Left trigger: Hold to run intake motor forward AND feeders in reverse
- * - Left bumper: Hold to run intake motor in reverse (outtake) (releases when let go)
- * - X button: HOLD to run feeders forward (only works if launcher has been running for 1.5+ seconds)
- * - Y button: HOLD to run feeders in reverse (intake NOT affected)
- * - A button: Press ONCE during init to confirm (servo stays OPEN until confirmed)
- *
- * SERVO BEHAVIOR (AUTOMATIC - NO OVERRIDES):
- * - During INIT: Stays OPEN, press A button once to confirm
- * - Servo moves to CLOSED position when intake is active
- * - Servo moves to OPEN position when launcher/feeders are active
- * - NO manual control during operation
  */
-
-@TeleOp(name = "Teleop", group = "StarterBot")
+@TeleOp(name = "Teleop", group = "RearDrive")
 @Config
 //@Disabled
 public class Teleop extends OpMode {
-    final double STOP_SPEED = 0.0; //We send this power to the servos when we want them to stop.
-    final double FULL_SPEED = 1.0;
-    final double DRIVE_SPEED_MULTIPLIER = 2; // Speed multiplier for mecanum drive (overclock)
-    final double LAUNCHER_WARMUP_TIME = 0.67; // Time for launcher to reach full speed before feeding
 
-    /*
-     * When we control our launcher motor, we are using encoders. These allow the control system
-     * to read the current speed of the motor and apply more or less power to keep it at a constant
-     * velocity. Here we are setting the target velocity that the launcher should run at.
-     */
-    final double LAUNCHER_TARGET_VELOCITY = 1300;
+    final double DRIVE_SPEED_MULTIPLIER = 2; // Speed multiplier for arcade drive (overclock)
 
-    // Declare OpMode members for mecanum drive
-    private DcMotor frontLeftDrive = null;
-    private DcMotor frontRightDrive = null;
-    private DcMotor backLeftDrive = null;
-    private DcMotor backRightDrive = null;
-    private DcMotorEx launcher = null;
-    private DcMotor intake = null;
-    private CRServo leftFeeder = null;
-    private CRServo rightFeeder = null;
-
-    // IMU for field-centric drive
-    private com.qualcomm.robotcore.hardware.IMU imu = null;
-
-    // Track whether launcher is running
-    private boolean launcherRunning = false;
-    private ElapsedTime launcherTimer = new ElapsedTime();
+    // Declare OpMode members for rear-wheel drive (4 motors, 2 per side)
+    private DcMotor leftDriveFront = null;
+    private DcMotor leftDriveBack = null;
+    private DcMotor rightDriveFront = null;
+    private DcMotor rightDriveBack = null;
 
     // Setup variables for drive wheel power levels for telemetry
-    double frontLeftPower;
-    double frontRightPower;
-    double backLeftPower;
-    double backRightPower;
-
-    private Servo rotationServo;
-
-    // Servo positions (adjust these values based on your servo's actual positions)
-    private static double SERVO_OPEN_POSITION = 0.1567;    // Fully open position (for launcher)
-    private static double SERVO_CLOSED_POSITION = 0.4367;  // Fully closed position (for intake)
-
-    // Servo toggle state
-    private boolean servoIsOpen = true;  // Start in OPEN position
-    private boolean aButtonPreviouslyPressed = false;
-    private boolean initConfirmed = false;  // Track if init confirmation is complete
+    double leftPower;
+    double rightPower;
 
     /*
      * Code to run ONCE when the driver hits INIT
@@ -104,84 +43,37 @@ public class Teleop extends OpMode {
         /*
          * Initialize the hardware variables. Note that the strings used here as parameters
          * to 'get' must correspond to the names assigned during the robot configuration
-         * step. Standard mecanum naming convention.
+         * step.
          */
-        frontLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_front");
-        frontRightDrive = hardwareMap.get(DcMotor.class, "right_drive_front");
-        backLeftDrive = hardwareMap.get(DcMotor.class, "left_drive_back");
-        backRightDrive = hardwareMap.get(DcMotor.class, "right_drive_back");
-        launcher = hardwareMap.get(DcMotorEx.class, "launch_motor");
-        intake = hardwareMap.get(DcMotor.class, "intake");
-        leftFeeder = hardwareMap.get(CRServo.class, "left_servo");
-        rightFeeder = hardwareMap.get(CRServo.class, "right_servo");
-        rotationServo = hardwareMap.get(Servo.class, "block_servo");
-
+        leftDriveFront = hardwareMap.get(DcMotor.class, "left_drive_front");
+        leftDriveBack = hardwareMap.get(DcMotor.class, "left_drive_back");
+        rightDriveFront = hardwareMap.get(DcMotor.class, "right_drive_front");
+        rightDriveBack = hardwareMap.get(DcMotor.class, "right_drive_back");
 
         /*
-         * Initialize the IMU with standard parameters for field-centric drive
+         * Motors on the right side typically need to be reversed so that positive power
+         * on both sides drives the robot forward. Adjust based on your robot's actual
+         * configuration after a first test drive.
          */
-        imu = hardwareMap.get(IMU.class, "imu");
-        IMU.Parameters parameters = new IMU.Parameters(new com.qualcomm.hardware.rev.RevHubOrientationOnRobot(
-                RevHubOrientationOnRobot.LogoFacingDirection.RIGHT,
-                RevHubOrientationOnRobot.UsbFacingDirection.BACKWARD));
-        imu.initialize(parameters);
-
-        /*
-         * For mecanum drive, motors on the right side typically need to be reversed.
-         * Adjust these based on your robot's actual configuration after first test drive.
-         */
-        frontLeftDrive.setDirection(DcMotor.Direction.REVERSE);
-        frontRightDrive.setDirection(DcMotor.Direction.FORWARD);
-        backLeftDrive.setDirection(DcMotor.Direction.REVERSE);
-        backRightDrive.setDirection(DcMotor.Direction.FORWARD);
-
-        /*
-         * Here we set our launcher to the RUN_USING_ENCODER run-mode.
-         * If you notice that you have no control over the velocity of the motor, it just jumps
-         * right to a number much higher than your set point, make sure that your encoders are plugged
-         * into the port right beside the motor itself. And that the motors polarity is consistent
-         * through any wiring.
-         */
-        launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        launcher.setDirection(DcMotorSimple.Direction.REVERSE);
+        leftDriveFront.setDirection(DcMotor.Direction.REVERSE);
+        leftDriveBack.setDirection(DcMotor.Direction.REVERSE);
+        rightDriveFront.setDirection(DcMotorSimple.Direction.FORWARD);
+        rightDriveBack.setDirection(DcMotorSimple.Direction.FORWARD);
 
         /*
          * Setting zeroPowerBehavior to BRAKE enables a "brake mode". This causes the motor to
          * slow down much faster when it is coasting. This creates a much more controllable
-         * drivetrain. As the robot stops much quicker.
+         * drivetrain, as the robot stops much quicker.
          */
-        frontLeftDrive.setZeroPowerBehavior(BRAKE);
-        frontRightDrive.setZeroPowerBehavior(BRAKE);
-        backLeftDrive.setZeroPowerBehavior(BRAKE);
-        backRightDrive.setZeroPowerBehavior(BRAKE);
-        launcher.setZeroPowerBehavior(BRAKE);
-        intake.setZeroPowerBehavior(BRAKE);
-
-        /*
-         * set Feeders to an initial value to initialize the servo controller
-         */
-        leftFeeder.setPower(STOP_SPEED);
-        rightFeeder.setPower(STOP_SPEED);
-
-        launcher.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(300, 0, 0, 10));
-
-        /*
-         * Much like our drivetrain motors, we set the left feeder servo to reverse so that they
-         * both work to feed the ball into the robot.
-         */
-        leftFeeder.setDirection(DcMotorSimple.Direction.REVERSE);
-
-        /*
-         * Set servo to OPEN position at startup
-         */
-        rotationServo.setPosition(SERVO_OPEN_POSITION);
-        servoIsOpen = true;
+        leftDriveFront.setZeroPowerBehavior(BRAKE);
+        leftDriveBack.setZeroPowerBehavior(BRAKE);
+        rightDriveFront.setZeroPowerBehavior(BRAKE);
+        rightDriveBack.setZeroPowerBehavior(BRAKE);
 
         /*
          * Tell the driver that initialization is complete.
          */
-        telemetry.addData("Status", "Initialized - Mecanum Drive");
-        telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
+        telemetry.addData("Status", "Initialized - Rear Wheel Drive");
         telemetry.addData("", "Press START to begin");
         telemetry.update();
     }
@@ -191,22 +83,7 @@ public class Teleop extends OpMode {
      */
     @Override
     public void init_loop() {
-        // Check for A button press to confirm init
-        if (gamepad2.a && !aButtonPreviouslyPressed && !initConfirmed) {
-            initConfirmed = true;
-        }
-        aButtonPreviouslyPressed = gamepad2.a;
-
-        if (!initConfirmed) {
-            telemetry.addData("Status", "WAITING FOR CONFIRMATION");
-            telemetry.addData("", ">>> PRESS GAMEPAD 2 'A' TO CONFIRM <<<");
-            telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
-        } else {
-            telemetry.addData("Status", "Ready to Start!");
-            telemetry.addData("", "✓ CONFIRMED - Press START to begin");
-            telemetry.addData("Servo Position", "OPEN (Launcher Ready)");
-        }
-        telemetry.addData("", "Servo auto-positions during operation");
+        telemetry.addData("Status", "Ready to Start!");
         telemetry.update();
     }
 
@@ -214,172 +91,19 @@ public class Teleop extends OpMode {
      * Code to run ONCE when the driver hits START
      */
     @Override
-    public void start() {
-        // Reset button state for loop
-        aButtonPreviouslyPressed = false;
-    }
+    public void start() { }
 
     /*
      * Code to run REPEATEDLY after the driver hits START but before they hit STOP
      */
     @Override
     public void loop() {
-        // GAMEPAD 1: Reset heading with options button
-        if (gamepad1.options) {
-            imu.resetYaw();
-        }
-
-        // GAMEPAD 1: Field-centric mecanum drive control
-        mecanumDrive(-gamepad1.left_stick_y, gamepad1.left_stick_x, gamepad1.right_stick_x);
-
-        /*
-         * GAMEPAD 2: Right trigger - Hold to run launcher motor, release to stop
-         */
-        if (gamepad2.right_trigger > 0.1) { // Trigger threshold to avoid accidental activation
-            if (!launcherRunning) {
-                // Just started the launcher
-                launcherRunning = true;
-                launcherTimer.reset();
-            }
-            launcher.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-            launcher.setVelocity(LAUNCHER_TARGET_VELOCITY);
-
-        } else {
-            // Trigger released, stop launcher
-            if (launcherRunning) {
-                launcherRunning = false;
-            }
-            launcher.setPower(0);
-            launcher.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        }
-
-        /*
-         * GAMEPAD 2: Left trigger - Hold to run intake motor forward AND feeders in reverse
-         */
-        boolean intakeActive = gamepad2.left_trigger > 0.1;
-        boolean outtakeActive = gamepad2.left_bumper;
-
-        if (intakeActive) {
-            intake.setPower(FULL_SPEED);
-            // Run feeders in REVERSE during intake (opposite of launch direction
-
-        } else if (outtakeActive) {
-            /*
-             * GAMEPAD 2: Left bumper - Hold to run intake motor in reverse (outtake)
-             */
-            intake.setPower(-FULL_SPEED);
-            leftFeeder.setPower(STOP_SPEED);
-            rightFeeder.setPower(STOP_SPEED);
-        } else {
-            intake.setPower(0);
-            // Don't automatically stop feeders here - let X button control them
-        }
-
-        // Check if launcher has warmed up (been running for at least 1.5 seconds)
-        boolean launcherWarmedUp = launcherRunning && (launcherTimer.seconds() >= LAUNCHER_WARMUP_TIME);
-
-        /*
-         * GAMEPAD 2: X button - HOLD to run feeders forward
-         * Only works if launcher has been warmed up for 1.5+ seconds
-         * Feeders run continuously while X is held down
-         * Also runs intake motor while feeding
-         */
-        boolean feedersActive = false;
-        boolean feedersReverse = false;
-
-        if (gamepad2.x && launcherWarmedUp) {
-            // X button is being held and launcher is ready
-            leftFeeder.setPower(FULL_SPEED);
-            rightFeeder.setPower(FULL_SPEED);
-            intake.setPower(FULL_SPEED);
-            feedersActive = true;
-        } else if (gamepad2.y) {
-            /*
-             * GAMEPAD 2: Y button - HOLD to run feeders in REVERSE
-             * Only affects feeders, NOT the intake motor
-             */
-            leftFeeder.setPower(-FULL_SPEED);
-            rightFeeder.setPower(-FULL_SPEED);
-            feedersReverse = true;
-        } else if (!intakeActive && !outtakeActive) {
-            // No feeder buttons pressed and intake not active - stop feeders
-            leftFeeder.setPower(STOP_SPEED);
-            rightFeeder.setPower(STOP_SPEED);
-        }
-
-        /*
-         * AUTOMATIC SERVO POSITIONING
-         * - CLOSED when intake is active
-         * - OPEN when launcher/feeders are active
-         */
-        if (intakeActive || outtakeActive) {
-            // Intake is running - move to CLOSED position
-            if (servoIsOpen) {
-                rotationServo.setPosition(SERVO_CLOSED_POSITION);
-                servoIsOpen = false;
-            }
-        } else if (launcherRunning || feedersActive || feedersReverse) {
-            // Launcher or feeders are running - move to OPEN position
-            if (!servoIsOpen) {
-                rotationServo.setPosition(SERVO_OPEN_POSITION);
-                servoIsOpen = true;
-            }
-        }
+        // GAMEPAD 1: Arcade drive control
+        arcadeDrive(-gamepad1.left_stick_y, gamepad1.right_stick_x);
 
         // Telemetry for debugging
-        telemetry.addData("Status", "Driver: GP1 | Operator: GP2");
-        telemetry.addData("Heading", "%.2f degrees", Math.toDegrees(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS)));
-        telemetry.addData("Drive", "FL:%.2f FR:%.2f BL:%.2f BR:%.2f",
-                frontLeftPower, frontRightPower, backLeftPower, backRightPower);
-
-        // Servo position telemetry
-        double currentServoPos = rotationServo.getPosition();
-        String servoState = servoIsOpen ? "OPEN (Launcher)" : "CLOSED (Intake)";
-        telemetry.addData("Rotation Servo", "%s (%.2f)", servoState, currentServoPos);
-        telemetry.addData("", "Auto-controlled");
-
-        telemetry.addData("Launcher Status", launcherRunning ? "RUNNING" : "STOPPED");
-
-        if (launcherRunning) {
-            double warmupTime = launcherTimer.seconds();
-            if (warmupTime < LAUNCHER_WARMUP_TIME) {
-                telemetry.addData("Launcher Warmup", "%.1f / %.1f sec", warmupTime, LAUNCHER_WARMUP_TIME);
-            } else {
-                telemetry.addData("Launcher", "READY TO FEED");
-            }
-        }
-
-        telemetry.addData("Launcher Velocity", launcher.getVelocity());
-
-        String feederStatus;
-        if (feedersActive) {
-            feederStatus = "FEEDING FORWARD (Hold X)";
-        } else if (feedersReverse) {
-            feederStatus = "FEEDING REVERSE (Hold Y)";
-        } else if (launcherRunning && launcherTimer.seconds() < LAUNCHER_WARMUP_TIME) {
-            feederStatus = "WARMING UP";
-        } else if (launcherRunning) {
-            feederStatus = "READY (Press X)";
-        } else {
-            feederStatus = "LAUNCHER OFF";
-        }
-        telemetry.addData("Feeders Status", feederStatus);
-
-        telemetry.addData("Feeder Power", "L: %.1f  R: %.1f",
-                leftFeeder.getPower(), rightFeeder.getPower());
-
-        String intakeStatus;
-        if (gamepad2.left_trigger > 0.1) {
-            intakeStatus = "INTAKE";
-        } else if (gamepad2.left_bumper) {
-            intakeStatus = "OUTTAKE";
-        } else if (feedersActive) {
-            intakeStatus = "FEEDING";
-        } else {
-            intakeStatus = "STOPPED";
-        }
-        telemetry.addData("Intake Status", intakeStatus);
-        telemetry.addData("Intake Power", "%.1f", intake.getPower());
+        telemetry.addData("Status", "Driver: GP1");
+        telemetry.addData("Drive", "L:%.2f R:%.2f", leftPower, rightPower);
         telemetry.update();
     }
 
@@ -390,48 +114,31 @@ public class Teleop extends OpMode {
     public void stop() { }
 
     /*
-     * Field-centric mecanum drive method
-     * Transforms driver inputs based on robot's heading so forward is always forward relative to field
+     * Simple arcade drive method for a 4-motor rear-wheel drive robot (2 per side).
      * @param forward - forward/backward movement (left stick Y)
-     * @param strafe - left/right strafing (left stick X)
      * @param rotate - rotation (right stick X)
      */
-    void mecanumDrive(double forward, double strafe, double rotate) {
-        // Get robot heading from IMU
-        double botHeading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
-
-        // Rotate the movement direction based on robot heading for field-centric control
-        double rotatedForward = forward * Math.cos(botHeading) - strafe * Math.sin(botHeading);
-        double rotatedStrafe = forward * Math.sin(botHeading) + strafe * Math.cos(botHeading);
-
+    void arcadeDrive(double forward, double rotate) {
         // Apply speed multiplier for overdrive
-        rotatedForward *= DRIVE_SPEED_MULTIPLIER;
-        rotatedStrafe *= DRIVE_SPEED_MULTIPLIER;
+        forward *= DRIVE_SPEED_MULTIPLIER;
         rotate *= DRIVE_SPEED_MULTIPLIER;
 
-        // Calculate power for each wheel using mecanum drive kinematics
-        frontLeftPower = rotatedForward + rotatedStrafe + rotate;
-        frontRightPower = rotatedForward - rotatedStrafe - rotate;
-        backLeftPower = rotatedForward - rotatedStrafe + rotate;
-        backRightPower = rotatedForward + rotatedStrafe - rotate;
+        // Calculate power for each side using arcade drive kinematics
+        leftPower = forward + rotate;
+        rightPower = forward - rotate;
 
         // Normalize wheel powers to ensure no value exceeds 1.0
-        double maxPower = Math.max(Math.abs(frontLeftPower),
-                Math.max(Math.abs(frontRightPower),
-                        Math.max(Math.abs(backLeftPower),
-                                Math.abs(backRightPower))));
+        double maxPower = Math.max(Math.abs(leftPower), Math.abs(rightPower));
 
         if (maxPower > 1.0) {
-            frontLeftPower /= maxPower;
-            frontRightPower /= maxPower;
-            backLeftPower /= maxPower;
-            backRightPower /= maxPower;
+            leftPower /= maxPower;
+            rightPower /= maxPower;
         }
 
         // Send calculated power to wheels
-        frontLeftDrive.setPower(frontLeftPower);
-        frontRightDrive.setPower(frontRightPower);
-        backLeftDrive.setPower(backLeftPower);
-        backRightDrive.setPower(backRightPower);
+        leftDriveFront.setPower(leftPower);
+        leftDriveBack.setPower(leftPower);
+        rightDriveFront.setPower(rightPower);
+        rightDriveBack.setPower(rightPower);
     }
 }
